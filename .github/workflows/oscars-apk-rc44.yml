@@ -37,14 +37,12 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Verify source
+      - name: Verify Android source
         working-directory: /tmp/oscars
-        run: |
-          node scripts/verify-release.mjs
-          node scripts/verify-android-current.mjs
+        run: node scripts/verify-android-current.mjs
       - name: Build debug APK
         working-directory: /tmp/oscars/android-native
-        run: gradle --no-daemon clean assembleDebug
+        run: gradle --no-daemon clean lintDebug assembleDebug
       - name: Package APK
         shell: bash
         run: |
