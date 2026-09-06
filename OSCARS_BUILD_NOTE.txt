@@ -1,0 +1,1 @@
+Temporary isolated branch for building the Oscars Android APK. Main branch is not modified.
