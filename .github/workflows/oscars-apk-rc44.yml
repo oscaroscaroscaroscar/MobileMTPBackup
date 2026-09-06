@@ -13,12 +13,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Reconstruct and validate Oscars source
+      - name: Validate source chunks
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '5cd5cb4f59fcdd605a4dd0261a90d209647a4b2acb94c64643c7262aa1dad8ce  oscars-src-v2.part00' | sha256sum -c -
+          echo '5ebe933a3c3c0d6033b1ff2cb7cf9b184b958736e41fec0335aa780d9a2fd9f3  oscars-src-v2.part01' | sha256sum -c -
+          echo '19d87f75dbccbdf106745ba5aeb20d4266cfc3a1aa20f194deca07f5385ab354  oscars-src-v2.part02' | sha256sum -c -
+      - name: Reconstruct Oscars source
         shell: bash
         run: |
           set -euo pipefail
           cat oscars-src-v2.part00 oscars-src-v2.part01 oscars-src-v2.part02 | base64 -d > /tmp/oscars.zip
-          sha256sum /tmp/oscars.zip
+          echo '6fcd935aae82f1b4e070fd59ea215d40eac1686656c0cf2a4965ee82b89ef64b  /tmp/oscars.zip' | sha256sum -c -
           unzip -t /tmp/oscars.zip
           mkdir -p /tmp/oscars
           unzip -q /tmp/oscars.zip -d /tmp/oscars
