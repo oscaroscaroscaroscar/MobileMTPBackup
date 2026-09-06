@@ -13,21 +13,19 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Verify project source
-        shell: pwsh
-        run: |
-          if (!(Test-Path 'MobileMTPBackup/MobileMTPBackup.csproj')) { throw 'Project source has not been uploaded yet.' }
       - name: Restore
         run: dotnet restore MobileMTPBackup/MobileMTPBackup.csproj
       - name: Build
         run: dotnet build MobileMTPBackup/MobileMTPBackup.csproj -c Release --no-restore
-      - name: Publish self-contained Windows x64
+      - name: Publish
         run: dotnet publish MobileMTPBackup/MobileMTPBackup.csproj -c Release -r win-x64 --self-contained true -o publish/win-x64
       - name: Verify EXE
         shell: pwsh
         run: |
           if (!(Test-Path 'publish/win-x64/MobileMTPBackup.exe')) { throw 'MobileMTPBackup.exe missing.' }
+          $size=(Get-Item 'publish/win-x64/MobileMTPBackup.exe').Length
+          Write-Host "EXE size: $size bytes"
       - uses: actions/upload-artifact@v4
         with:
-          name: MobileMTPBackup-v4.6-Windows-x64
+          name: MobileMTPBackup-v5.0-Windows-x64
           path: publish/win-x64/
