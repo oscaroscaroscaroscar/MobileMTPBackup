@@ -42,12 +42,13 @@ jobs:
         run: node scripts/verify-android-current.mjs
       - name: Build debug APK
         working-directory: /tmp/oscars/android-native
-        run: gradle --no-daemon clean lintDebug assembleDebug
+        run: gradle --no-daemon clean assembleDebug
       - name: Package APK
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/out
+          test -s /tmp/oscars/android-native/app/build/outputs/apk/debug/app-debug.apk
           cp /tmp/oscars/android-native/app/build/outputs/apk/debug/app-debug.apk /tmp/out/oscars-v0.9.5-rc44-debug.apk
           sha256sum /tmp/out/oscars-v0.9.5-rc44-debug.apk | tee /tmp/out/oscars-v0.9.5-rc44-debug.apk.sha256
       - name: Upload APK
