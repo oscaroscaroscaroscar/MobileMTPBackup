@@ -1,5 +1,4 @@
 using System.IO;
-using System.Reflection;
 using MediaDevices;
 
 namespace MobileMTPBackup;
@@ -15,24 +14,18 @@ public sealed class MtpService
 {
     public IReadOnlyList<MtpDeviceInfo> GetDevices()
     {
-        var asm = typeof(MediaDevice).Assembly;
-        object? raw = null;
-        foreach (var type in asm.GetTypes())
-        {
-            var method = type.GetMethods(BindingFlags.Public | BindingFlags.Static)
-                .FirstOrDefault(m => m.Name == "GetDevices" && m.GetParameters().Length == 0);
-            if (method is null) continue;
-            raw = method.Invoke(null, null);
-            if (raw is not null) break;
-        }
-        if (raw is not System.Collections.IEnumerable enumerable) return Array.Empty<MtpDeviceInfo>();
-        var result = new List<MtpDeviceInfo>();
-        foreach (var item in enumerable)
-        {
-            if (item is not MediaDevice d) continue;
-            result.Add(new MtpDeviceInfo(d.DeviceId, string.IsNullOrWhiteSpace(d.FriendlyName) ? d.Description : d.FriendlyName, d));
-        }
-        return result;
+        var devices = MediaDevice.GetDevices().ToList();
+        return devices.Select(d => new MtpDeviceInfo(
+            d.DeviceId ?? "",
+            !string.IsNullOrWhiteSpace(d.FriendlyName) ? d.FriendlyName : (!string.IsNullOrWhiteSpace(d.Description) ? d.Description : "MTP USB Device"),
+            d)).ToList();
+    }
+
+    public string GetDiagnosticSummary()
+    {
+        var asm = typeof(MediaDevice).Assembly.GetName();
+        var devices = MediaDevice.GetDevices().ToList();
+        return $"MediaDevices {asm.Version}; hittade {devices.Count} enhet(er).";
     }
 
     public IReadOnlyList<MtpEntry> GetRootEntries(MtpDeviceInfo device) => GetEntries(device, "\\");
@@ -46,24 +39,32 @@ public sealed class MtpService
             foreach (var p in device.NativeDevice.GetDirectories(path))
             {
                 var i = device.NativeDevice.GetDirectoryInfo(p);
-                result.Add(new(p, i.Name, true, null, i.CreationTime, i.LastWriteTime));
+                result.Add(new MtpEntry(p, i.Name, true, null, i.CreationTime, i.LastWriteTime));
             }
             foreach (var p in device.NativeDevice.GetFiles(path))
             {
                 var i = device.NativeDevice.GetFileInfo(p);
-                long? length = i.Length > long.MaxValue ? long.MaxValue : (long)i.Length;
-                result.Add(new(p, i.Name, false, length, i.CreationTime, i.LastWriteTime));
+                result.Add(new MtpEntry(p, i.Name, false, Convert.ToInt64(i.Length), i.CreationTime, i.LastWriteTime));
             }
             return result.OrderByDescending(x => x.IsDirectory).ThenBy(x => x.Name).ToList();
         }
-        finally { device.NativeDevice.Disconnect(); }
+        finally
+        {
+            if (device.NativeDevice.IsConnected) device.NativeDevice.Disconnect();
+        }
     }
 
     public void DownloadFile(MtpDeviceInfo device, string remotePath, string localPath)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
         device.NativeDevice.Connect();
-        try { device.NativeDevice.DownloadFile(remotePath, localPath); }
-        finally { device.NativeDevice.Disconnect(); }
+        try
+        {
+            device.NativeDevice.DownloadFile(remotePath, localPath);
+        }
+        finally
+        {
+            if (device.NativeDevice.IsConnected) device.NativeDevice.Disconnect();
+        }
     }
 }
