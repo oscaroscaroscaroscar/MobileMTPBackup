@@ -20,24 +20,57 @@ public sealed class BackupEngine
         string tempPath = localPath + ".partial";
         try
         {
-            log($"Kopierar {source.FullName}");
+            log($"1/5 Hämtar från telefon: {source.FullName}");
             await Task.Run(() => _mtp.DownloadFile(device, source.FullName, tempPath));
+
+            log("2/5 Kontrollerar filstorlek");
             long size = new FileInfo(tempPath).Length;
-            if (source.Length is long expected && expected >= 0 && size != expected) throw new IOException($"Storleken stämmer inte. Telefon: {expected} byte, backup: {size} byte.");
-            File.Move(tempPath, localPath);
-            DateTime? preferredDate = source.DateCreated ?? source.DateModified;
-            if (preserveDates && preferredDate is DateTime dt)
+            if (source.Length is long expected && expected >= 0 && size != expected)
+                throw new IOException($"Storleken stämmer inte. Telefon: {expected} byte, backup: {size} byte.");
+
+            string hash = "NOT_CHECKED";
+            if (verifySha256)
             {
-                File.SetCreationTime(localPath, dt);
-                File.SetLastWriteTime(localPath, source.DateModified ?? dt);
+                log("3/5 Beräknar SHA-256");
+                hash = await Sha256Async(tempPath);
             }
-            string hash = verifySha256 ? await Sha256Async(localPath) : "NOT_CHECKED";
-            log($"Klar: {localPath}");
-            return new(source.FullName, localPath, size, source.DateCreated, source.DateModified, DateTime.Now, hash);
+            else
+            {
+                log("3/5 SHA-256 hoppades över");
+            }
+
+            log("4/5 Slutför filen");
+            File.Move(tempPath, localPath);
+
+            if (preserveDates)
+            {
+                try
+                {
+                    var created = ValidDate(source.DateCreated ?? source.DateModified);
+                    var modified = ValidDate(source.DateModified ?? source.DateCreated);
+                    if (created is DateTime c) File.SetCreationTime(localPath, c);
+                    if (modified is DateTime m) File.SetLastWriteTime(localPath, m);
+                    if (created is null && modified is null)
+                        log("Datum saknas från MTP – filen sparades ändå. EXIF-fallback läggs till senare.");
+                    else
+                        log("Originaldatum bevarat när giltigt datum fanns.");
+                }
+                catch (Exception dateEx)
+                {
+                    log("VARNING: kunde inte sätta originaldatum, men filen är sparad. " + dateEx.GetBaseException().Message);
+                }
+            }
+
+            log($"5/5 Klar: {localPath}");
+            return new(source.FullName, localPath, size, ValidDate(source.DateCreated), ValidDate(source.DateModified), DateTime.Now, hash);
         }
         catch
         {
-            if (File.Exists(tempPath)) File.Delete(tempPath);
+            try
+            {
+                if (File.Exists(tempPath)) File.Delete(tempPath);
+            }
+            catch { }
             throw;
         }
     }
@@ -46,6 +79,12 @@ public sealed class BackupEngine
     {
         Directory.CreateDirectory(root);
         await File.AppendAllTextAsync(Path.Combine(root,"backup-manifest.jsonl"), JsonSerializer.Serialize(record)+Environment.NewLine);
+    }
+
+    private static DateTime? ValidDate(DateTime? value)
+    {
+        if (value is not DateTime dt) return null;
+        return dt.Year >= 1970 && dt <= DateTime.Now.AddDays(2) ? dt : null;
     }
 
     private static async Task<string> Sha256Async(string path)
