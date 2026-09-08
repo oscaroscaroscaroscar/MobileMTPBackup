@@ -39,12 +39,12 @@ public sealed class MtpService
             foreach (var p in device.NativeDevice.GetDirectories(path))
             {
                 var i = device.NativeDevice.GetDirectoryInfo(p);
-                result.Add(new MtpEntry(p, i.Name, true, null, i.CreationTime, i.LastWriteTime));
+                result.Add(new MtpEntry(p, i.Name, true, null, ValidDate(i.CreationTime), ValidDate(i.LastWriteTime)));
             }
             foreach (var p in device.NativeDevice.GetFiles(path))
             {
                 var i = device.NativeDevice.GetFileInfo(p);
-                result.Add(new MtpEntry(p, i.Name, false, Convert.ToInt64(i.Length), i.CreationTime, i.LastWriteTime));
+                result.Add(new MtpEntry(p, i.Name, false, Convert.ToInt64(i.Length), ValidDate(i.CreationTime), ValidDate(i.LastWriteTime)));
             }
             return result.OrderByDescending(x => x.IsDirectory).ThenBy(x => x.Name).ToList();
         }
@@ -60,11 +60,16 @@ public sealed class MtpService
         device.NativeDevice.Connect();
         try
         {
-            device.NativeDevice.DownloadFile(remotePath, localPath);
+            using var output = new FileStream(localPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            device.NativeDevice.DownloadFile(remotePath, output);
+            output.Flush(true);
         }
         finally
         {
             if (device.NativeDevice.IsConnected) device.NativeDevice.Disconnect();
         }
     }
+
+    private static DateTime? ValidDate(DateTime value)
+        => value.Year >= 1970 && value <= DateTime.Now.AddDays(2) ? value : null;
 }
