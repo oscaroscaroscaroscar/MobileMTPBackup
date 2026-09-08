@@ -70,6 +70,9 @@ public sealed class MtpService
         }
     }
 
-    private static DateTime? ValidDate(DateTime value)
-        => value.Year >= 1970 && value <= DateTime.Now.AddDays(2) ? value : null;
+    private static DateTime? ValidDate(DateTime? value)
+    {
+        if (value is not DateTime dt) return null;
+        return dt.Year >= 1970 && dt <= DateTime.Now.AddDays(2) ? dt : null;
+    }
 }
