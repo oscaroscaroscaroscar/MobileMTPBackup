@@ -3,9 +3,9 @@ using System.Text.Json;
 
 namespace MobileMTPBackup;
 
-public sealed record AppSettings(string DestinationPath, string? LastDeviceName)
+public sealed record AppSettings(string DestinationPath, string? LastDeviceName, string ConnectionMode = "USB/MTP", string WifiHost = "", int WifiPort = 8765)
 {
-    public static AppSettings Default => new(@"C:\MobilBackup", null);
+    public static AppSettings Default => new(@"C:\MobilBackup", null, "USB/MTP", "", 8765);
 }
 
 public static class AppSettingsStore
