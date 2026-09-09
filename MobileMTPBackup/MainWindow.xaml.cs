@@ -25,7 +25,7 @@ public partial class MainWindow : Window
     private void Up_Click(object sender,RoutedEventArgs e){if(_currentPath=="\\")return;string t=_currentPath.TrimEnd('\\');int last=t.LastIndexOf('\\');_currentPath=last<=0?"\\":t[..last];LoadPath();}
     private void ChooseFolder_Click(object sender,RoutedEventArgs e){var dialog=new OpenFolderDialog{Title="Välj backupmapp"};if(dialog.ShowDialog()==true)DestinationTextBox.Text=dialog.FolderName;}
 
-    private async void BackupSelected_Click(object sender,RoutedEventArgs e){var d=SelectedDevice;var row=SelectedEntry;if(d is null){Log("Ingen telefon vald.");return;}if(row is null||row.Entry.IsDirectory){Log("Markera en fil.");return;}try{string basePath=DestinationTextBox.Text.Trim();if(string.IsNullOrWhiteSpace(basePath))throw new InvalidOperationException("Välj backupmapp först.");string root=Path.Combine(basePath,Sanitize(d.Name));Directory.CreateDirectory(root);Log($"Backup startar: {row.Entry.FullName} -> {root}");var rec=await _backup.BackupOneFileAsync(d,row.Entry,root,PreserveDatesCheckBox.IsChecked==true,VerifyCheckBox.IsChecked==true,Log);try{await BackupEngine.AppendManifestAsync(root,rec);}catch(Exception mex){Log("MANIFEST VARNING: filen är sparad men manifestet kunde inte uppdateras. "+mex);}BackupStatusText.Text="KLAR: vald fil säkerhetskopierad.";Log($"SHA-256: {rec.Sha256}");}catch(Exception ex){BackupStatusText.Text="Backup misslyckades – se loggen.";var detail=ex.ToString();Log("BACKUP FEL: "+detail);MessageBox.Show(detail,"BACKUP FEL",MessageBoxButton.OK,MessageBoxImage.Error);}}
+    private async void BackupSelected_Click(object sender,RoutedEventArgs e){var d=SelectedDevice;var row=SelectedEntry;if(d is null){Log("Ingen telefon vald.");return;}if(row is null||row.Entry.IsDirectory){Log("Markera en fil.");return;}try{string basePath=DestinationTextBox.Text.Trim();if(string.IsNullOrWhiteSpace(basePath))throw new InvalidOperationException("Välj backupmapp först.");EnsureFreeSpace(basePath,row.Entry.Length??0);string root=Path.Combine(basePath,Sanitize(d.Name));Directory.CreateDirectory(root);Log($"Backup startar: {row.Entry.FullName} -> {root}");var rec=await _backup.BackupOneFileAsync(d,row.Entry,root,PreserveDatesCheckBox.IsChecked==true,VerifyCheckBox.IsChecked==true,Log);try{await BackupEngine.AppendManifestAsync(root,rec);}catch(Exception mex){Log("MANIFEST VARNING: filen är sparad men manifestet kunde inte uppdateras. "+mex);}BackupStatusText.Text="KLAR: vald fil säkerhetskopierad.";Log($"SHA-256: {rec.Sha256}");}catch(Exception ex){BackupStatusText.Text="Backup misslyckades – se loggen.";var detail=ex.ToString();Log("BACKUP FEL: "+detail);MessageBox.Show(detail,"BACKUP FEL",MessageBoxButton.OK,MessageBoxImage.Error);}}
 
     private async void BackupFolder_Click(object sender,RoutedEventArgs e)
     {
@@ -36,6 +36,10 @@ public partial class MainWindow : Window
         try
         {
             string basePath=DestinationTextBox.Text.Trim();if(string.IsNullOrWhiteSpace(basePath))throw new InvalidOperationException("Välj backupmapp först.");
+            BackupStatusText.Text="Förkontroll: räknar filer och utrymme...";
+            var preview=await Task.Run(()=>ScanFolder(d,remoteFolder,_folderCts.Token));
+            EnsureFreeSpace(basePath,preview.Bytes);
+            Log($"FÖRKONTROLL OK: {preview.Files} filer, cirka {FormatBytes(preview.Bytes)}. Ledigt diskutrymme är tillräckligt.");
             string folderName=remoteFolder=="\\"?"Telefonrot":Path.GetFileName(remoteFolder.TrimEnd('\\'));
             string root=Path.Combine(basePath,Sanitize(d.Name),Sanitize(folderName));Directory.CreateDirectory(root);
             BackupFolderButton.IsEnabled=false;PauseButton.IsEnabled=true;ResumeButton.IsEnabled=false;CancelButton.IsEnabled=true;BackupProgressBar.Value=0;BackupStatusText.Text="Hel-mapp backup startar...";
@@ -53,22 +57,68 @@ public partial class MainWindow : Window
         }
     }
 
-    private void Pause_Click(object sender,RoutedEventArgs e)
+    private void Pause_Click(object sender,RoutedEventArgs e){if(_folderCts is null)return;_isPaused=true;PauseButton.IsEnabled=false;ResumeButton.IsEnabled=true;BackupStatusText.Text="PAUSAD – aktuell fil slutförs först.";Log("PAUS begärd.");}
+    private void Resume_Click(object sender,RoutedEventArgs e){if(_folderCts is null)return;_isPaused=false;PauseButton.IsEnabled=true;ResumeButton.IsEnabled=false;BackupStatusText.Text="Fortsätter backup...";Log("FORTSÄTT begärd.");}
+    private void Cancel_Click(object sender,RoutedEventArgs e){if(_folderCts is null)return;CancelButton.IsEnabled=false;BackupStatusText.Text="Avbryter... aktuell fil kan behöva slutföras först.";Log("AVBRYT begärd.");_folderCts.Cancel();}
+
+    private async void Preview_Click(object sender,RoutedEventArgs e)
     {
-        if(_folderCts is null)return;_isPaused=true;PauseButton.IsEnabled=false;ResumeButton.IsEnabled=true;BackupStatusText.Text="PAUSAD – aktuell fil slutförs först.";Log("PAUS begärd.");
+        var d=SelectedDevice;if(d is null){MessageBox.Show("Ingen telefon vald.","FÖRHANDSGRANSKA");return;}
+        string remoteFolder=SelectedEntry?.Entry.IsDirectory==true?SelectedEntry.Entry.FullName:_currentPath;
+        try
+        {
+            PreviewButton.IsEnabled=false;BackupStatusText.Text="Förhandsgranskar...";
+            var preview=await Task.Run(()=>ScanFolder(d,remoteFolder,CancellationToken.None));
+            string basePath=DestinationTextBox.Text.Trim();
+            string diskInfo="Backup-mål saknas.";
+            if(!string.IsNullOrWhiteSpace(basePath))
+            {
+                long free=GetFreeSpace(basePath);
+                diskInfo=$"Ledigt på backupdisken: {FormatBytes(free)}\nBehov: cirka {FormatBytes(preview.Bytes)}\nMarginal: {FormatBytes(Math.Max(0,free-preview.Bytes))}";
+            }
+            string text=$"Mapp: {remoteFolder}\nFiler: {preview.Files}\nMappar: {preview.Folders}\nTotal storlek: cirka {FormatBytes(preview.Bytes)}\n\n{diskInfo}";
+            Log("FÖRHANDSGRANSKNING: "+text.Replace("\n"," | "));
+            BackupStatusText.Text=$"Förhandsgranskning klar: {preview.Files} filer, {FormatBytes(preview.Bytes)}.";
+            MessageBox.Show(text,"FÖRHANDSGRANSKNING",MessageBoxButton.OK,MessageBoxImage.Information);
+        }
+        catch(Exception ex){Log("FÖRHANDSGRANSKNING FEL: "+ex);MessageBox.Show(ex.ToString(),"FÖRHANDSGRANSKNING FEL",MessageBoxButton.OK,MessageBoxImage.Error);}
+        finally{PreviewButton.IsEnabled=true;}
     }
-    private void Resume_Click(object sender,RoutedEventArgs e)
+
+    private PreviewInfo ScanFolder(MtpDeviceInfo device,string remoteFolder,CancellationToken token)
     {
-        if(_folderCts is null)return;_isPaused=false;PauseButton.IsEnabled=true;ResumeButton.IsEnabled=false;BackupStatusText.Text="Fortsätter backup...";Log("FORTSÄTT begärd.");
+        long bytes=0;int files=0,folders=0;var visited=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Walk(string path)
+        {
+            token.ThrowIfCancellationRequested();if(!visited.Add(path))return;
+            IReadOnlyList<MtpEntry> entries=path=="\\"?_mtp.GetRootEntries(device):_mtp.GetEntries(device,path);
+            foreach(var entry in entries)
+            {
+                token.ThrowIfCancellationRequested();
+                if(entry.IsDirectory){folders++;Walk(entry.FullName);}else{files++;if(entry.Length is long len&&len>0)bytes+=len;}
+            }
+        }
+        Walk(remoteFolder);return new PreviewInfo(files,folders,bytes);
     }
-    private void Cancel_Click(object sender,RoutedEventArgs e)
+
+    private static void EnsureFreeSpace(string destination,long requiredBytes)
     {
-        if(_folderCts is null)return;CancelButton.IsEnabled=false;BackupStatusText.Text="Avbryter... aktuell fil kan behöva slutföras först.";Log("AVBRYT begärd.");_folderCts.Cancel();
+        long free=GetFreeSpace(destination);long reserve=Math.Max(256L*1024*1024,requiredBytes/20);long needed=requiredBytes+reserve;
+        if(free<needed)throw new IOException($"För lite ledigt diskutrymme. Behöver cirka {FormatBytes(needed)}, men bara {FormatBytes(free)} är ledigt.");
+    }
+    private static long GetFreeSpace(string destination)
+    {
+        string full=Path.GetFullPath(destination);string? root=Path.GetPathRoot(full);if(string.IsNullOrWhiteSpace(root))throw new IOException("Kan inte avgöra backupdisk.");
+        return new DriveInfo(root).AvailableFreeSpace;
+    }
+    private static string FormatBytes(long value)
+    {
+        string[] units={"B","KB","MB","GB","TB"};double v=Math.Max(0,value);int i=0;while(v>=1024&&i<units.Length-1){v/=1024;i++;}return $"{v:0.##} {units[i]}";
     }
 
     private void SystemTest_Click(object sender,RoutedEventArgs e){RefreshDevices();var d=SelectedDevice;if(d is null){MessageBox.Show("Ingen MTP-telefon hittades. Kontrollera att Enhetshanteraren visar MTP USB Device och klicka sedan Sök igen.","SYSTEMTEST");return;}try{var entries=_mtp.GetRootEntries(d);MessageBox.Show($"MTP OK: {d.Name}\nRoot innehåller {entries.Count} objekt.\n{_mtp.GetDiagnosticSummary()}","SYSTEMTEST");}catch(Exception ex){MessageBox.Show(ex.ToString(),"SYSTEMTEST FEL");}}
     private void AutoBackup_Click(object sender,RoutedEventArgs e)=>MessageBox.Show("Auto-backup media kommer i nästa version.");
-    private void Preview_Click(object sender,RoutedEventArgs e)=>MessageBox.Show("Förhandsgranskning kommer i nästa version.");
     private static string Sanitize(string value){foreach(char c in Path.GetInvalidFileNameChars())value=value.Replace(c,'_');return string.IsNullOrWhiteSpace(value)?"unnamed":value;}
 }
+public sealed record PreviewInfo(int Files,int Folders,long Bytes);
 public sealed class EntryRow{public MtpEntry Entry{get;} public string TypeText=>Entry.IsDirectory?"Mapp":"Fil";public string Name=>Entry.Name;public string SizeText=>Entry.IsDirectory?"":Entry.Length?.ToString()??"?";public string DateText=>(Entry.DateCreated??Entry.DateModified)?.ToString("yyyy-MM-dd HH:mm:ss")??"okänt";public EntryRow(MtpEntry entry)=>Entry=entry;}
