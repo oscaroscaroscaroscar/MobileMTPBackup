@@ -32,6 +32,8 @@ public partial class MainWindow : Window
         var d=SelectedDevice;if(d is null){Log("Ingen telefon vald.");return;}
         if(_folderCts is not null){Log("En hel-mapp backup kör redan.");return;}
         string remoteFolder=SelectedEntry?.Entry.IsDirectory==true?SelectedEntry.Entry.FullName:_currentPath;
+        DateTime startedAt=DateTime.Now;
+        string? reportRoot=null;
         _folderCts=new CancellationTokenSource();_isPaused=false;
         try
         {
@@ -41,15 +43,30 @@ public partial class MainWindow : Window
             EnsureFreeSpace(basePath,preview.Bytes);
             Log($"FÖRKONTROLL OK: {preview.Files} filer, cirka {FormatBytes(preview.Bytes)}. Ledigt diskutrymme är tillräckligt.");
             string folderName=remoteFolder=="\\"?"Telefonrot":Path.GetFileName(remoteFolder.TrimEnd('\\'));
-            string root=Path.Combine(basePath,Sanitize(d.Name),Sanitize(folderName));Directory.CreateDirectory(root);
+            string root=Path.Combine(basePath,Sanitize(d.Name),Sanitize(folderName));Directory.CreateDirectory(root);reportRoot=root;
             BackupFolderButton.IsEnabled=false;PauseButton.IsEnabled=true;ResumeButton.IsEnabled=false;CancelButton.IsEnabled=true;BackupProgressBar.Value=0;BackupStatusText.Text="Hel-mapp backup startar...";
             Log($"HEL-MAPP BACKUP: {remoteFolder} -> {root}");
             var result=await _backup.BackupFolderRecursiveAsync(d,remoteFolder,root,PreserveDatesCheckBox.IsChecked==true,VerifyCheckBox.IsChecked==true,IncrementalCheckBox.IsChecked==true,Log,(done,total,path)=>Dispatcher.Invoke(()=>{BackupProgressBar.Value=total==0?0:(double)done/total*100;BackupStatusText.Text=$"{done}/{total}: {path}";}),_folderCts.Token,()=>_isPaused);
             BackupProgressBar.Value=100;BackupStatusText.Text=$"KLAR: {result.FilesCopied} kopierade, {result.FilesSkipped} hoppades över, {result.FilesFailed} fel.";
             Log($"HEL-MAPP KLAR: kopierade={result.FilesCopied}, överhoppade={result.FilesSkipped}, fel={result.FilesFailed}, byte={result.BytesCopied}");
+            try
+            {
+                string report=await SessionReportWriter.WriteAsync(root,new BackupSessionReport("5.10",d.Name,remoteFolder,root,startedAt,DateTime.Now,result.FilesCopied,result.FilesSkipped,result.FilesFailed,result.BytesCopied,false,null));
+                Log("SESSIONSRAPPORT: "+report);
+            }
+            catch(Exception rex){Log("RAPPORT VARNING: backupen är klar men sessionsrapporten kunde inte sparas. "+rex.GetBaseException().Message);}
         }
-        catch(OperationCanceledException){BackupStatusText.Text="AVBRUTEN av användaren.";Log("HEL-MAPP BACKUP AVBRUTEN av användaren.");}
-        catch(Exception ex){BackupStatusText.Text="Hel-mapp backup misslyckades – se loggen.";Log("HEL-MAPP FEL: "+ex);MessageBox.Show(ex.ToString(),"HEL-MAPP BACKUP FEL",MessageBoxButton.OK,MessageBoxImage.Error);}
+        catch(OperationCanceledException)
+        {
+            BackupStatusText.Text="AVBRUTEN av användaren.";Log("HEL-MAPP BACKUP AVBRUTEN av användaren.");
+            if(reportRoot is not null)try{string report=await SessionReportWriter.WriteAsync(reportRoot,new BackupSessionReport("5.10",d.Name,remoteFolder,reportRoot,startedAt,DateTime.Now,0,0,0,0,true,null));Log("SESSIONSRAPPORT: "+report);}catch(Exception rex){Log("RAPPORT VARNING: "+rex.GetBaseException().Message);}
+        }
+        catch(Exception ex)
+        {
+            BackupStatusText.Text="Hel-mapp backup misslyckades – se loggen.";Log("HEL-MAPP FEL: "+ex);
+            if(reportRoot is not null)try{string report=await SessionReportWriter.WriteAsync(reportRoot,new BackupSessionReport("5.10",d.Name,remoteFolder,reportRoot,startedAt,DateTime.Now,0,0,1,0,false,ex.GetBaseException().Message));Log("SESSIONSRAPPORT: "+report);}catch(Exception rex){Log("RAPPORT VARNING: "+rex.GetBaseException().Message);}
+            MessageBox.Show(ex.ToString(),"HEL-MAPP BACKUP FEL",MessageBoxButton.OK,MessageBoxImage.Error);
+        }
         finally
         {
             _isPaused=false;_folderCts?.Dispose();_folderCts=null;
