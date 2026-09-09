@@ -46,8 +46,16 @@ public partial class MainWindow : Window
             BackupProgressBar.Value=100;BackupStatusText.Text=$"KLAR: {result.FilesCopied} kopierade, {result.FilesSkipped} hoppades över, {result.FilesFailed} fel.";Log($"HEL-MAPP KLAR: kopierade={result.FilesCopied}, överhoppade={result.FilesSkipped}, fel={result.FilesFailed}, byte={result.BytesCopied}");
             try{string report=await SessionReportWriter.WriteAsync(root,new BackupSessionReport(AppVersion,d.Name,remoteFolder,root,startedAt,DateTime.Now,result.FilesCopied,result.FilesSkipped,result.FilesFailed,result.BytesCopied,false,null));Log("SESSIONSRAPPORT: "+report);}catch(Exception rex){Log("RAPPORT VARNING: backupen är klar men sessionsrapporten kunde inte sparas. "+rex.GetBaseException().Message);}
         }
-        catch(OperationCanceledException){BackupStatusText.Text="AVBRUTEN av användaren.";Log("HEL-MAPP BACKUP AVBRUTEN av användaren.");if(reportRoot is not null)try{string report=await SessionReportWriter.WriteAsync(reportRoot,new BackupSessionReport(AppVersion,d.Name,remoteFolder,reportRoot,startedAt,DateTime.Now,0,0,0,0,true,null));Log("SESSIONSRAPPORT: "+report);}catch(Exception rex){Log("RAPPORT VARNING: "+rex.GetBaseException().Message);}}
-        catch(Exception ex){BackupStatusText.Text="Hel-mapp backup misslyckades – se loggen.";Log("HEL-MAPP FEL: "+ex);if(reportRoot is not null)try{string report=await SessionReportWriter.WriteAsync(reportRoot,new BackupSessionReport(AppVersion,d.Name,remoteFolder,reportRoot,startedAt,DateTime.Now,0,0,1,0,false,ex.GetBaseException().Message));Log("SESSIONSRAPPORT: "+report);}catch(Exception rex){Log("RAPPORT VARNING: "+rex.GetBaseException().Message);}MessageBox.Show(ex.ToString(),"HEL-MAPP BACKUP FEL",MessageBoxButton.OK,MessageBoxImage.Error);}
+        catch(OperationCanceledException)
+        {
+            BackupStatusText.Text="AVBRUTEN av användaren.";Log("HEL-MAPP BACKUP AVBRUTEN av användaren.");
+            if(reportRoot is not null)try{var p=await SessionProgressRecovery.RecoverAsync(reportRoot,startedAt);string report=await SessionReportWriter.WriteAsync(reportRoot,new BackupSessionReport(AppVersion,d.Name,remoteFolder,reportRoot,startedAt,DateTime.Now,p.FilesCopied,0,0,p.BytesCopied,true,null));Log($"SESSIONSRAPPORT: {report} (återställd delprogress: {p.FilesCopied} filer, {p.BytesCopied} byte)");}catch(Exception rex){Log("RAPPORT VARNING: "+rex.GetBaseException().Message);}
+        }
+        catch(Exception ex)
+        {
+            BackupStatusText.Text="Hel-mapp backup misslyckades – se loggen.";Log("HEL-MAPP FEL: "+ex);
+            if(reportRoot is not null)try{var p=await SessionProgressRecovery.RecoverAsync(reportRoot,startedAt);string report=await SessionReportWriter.WriteAsync(reportRoot,new BackupSessionReport(AppVersion,d.Name,remoteFolder,reportRoot,startedAt,DateTime.Now,p.FilesCopied,0,1,p.BytesCopied,false,ex.GetBaseException().Message));Log($"SESSIONSRAPPORT: {report} (återställd delprogress: {p.FilesCopied} filer, {p.BytesCopied} byte)");}catch(Exception rex){Log("RAPPORT VARNING: "+rex.GetBaseException().Message);}MessageBox.Show(ex.ToString(),"HEL-MAPP BACKUP FEL",MessageBoxButton.OK,MessageBoxImage.Error);
+        }
         finally{_isPaused=false;_folderCts?.Dispose();_folderCts=null;BackupFolderButton.IsEnabled=true;AutoBackupButton.IsEnabled=true;PauseButton.IsEnabled=false;ResumeButton.IsEnabled=false;CancelButton.IsEnabled=false;}
     }
 
