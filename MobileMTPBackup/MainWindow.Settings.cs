@@ -9,6 +9,9 @@ public partial class MainWindow
     {
         var settings = AppSettingsStore.Load();
         DestinationTextBox.Text = settings.DestinationPath;
+        ConnectionModeComboBox.SelectedIndex = string.Equals(settings.ConnectionMode, "Wi-Fi", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        WifiHostTextBox.Text = settings.WifiHost;
+        WifiPortTextBox.Text = settings.WifiPort.ToString();
 
         if (!string.IsNullOrWhiteSpace(settings.LastDeviceName))
         {
@@ -33,7 +36,13 @@ public partial class MainWindow
             string destination = string.IsNullOrWhiteSpace(DestinationTextBox.Text)
                 ? AppSettings.Default.DestinationPath
                 : DestinationTextBox.Text.Trim();
-            AppSettingsStore.Save(new AppSettings(destination, SelectedDevice?.Name));
+            int port = int.TryParse(WifiPortTextBox.Text.Trim(), out var parsedPort) && parsedPort is >= 1 and <= 65535 ? parsedPort : 8765;
+            AppSettingsStore.Save(new AppSettings(
+                destination,
+                SelectedDevice?.Name,
+                IsWifiMode ? "Wi-Fi" : "USB/MTP",
+                WifiHostTextBox.Text.Trim(),
+                port));
         }
         catch (Exception ex)
         {
