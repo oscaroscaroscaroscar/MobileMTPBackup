@@ -49,7 +49,6 @@ public sealed class BackupEngine
                 {
                     var created = ValidDate(source.DateCreated ?? source.DateModified);
                     var modified = ValidDate(source.DateModified ?? source.DateCreated);
-
                     if (created is null && modified is null)
                     {
                         var exif = TryReadExifDateTimeOriginal(localPath);
@@ -62,7 +61,6 @@ public sealed class BackupEngine
                         else log("Inget giltigt MTP- eller EXIF-datum hittades – filens backupdatum behålls.");
                     }
                     else log("Originaldatum från MTP används.");
-
                     if (created is DateTime c) File.SetCreationTime(localPath, c);
                     if (modified is DateTime m) File.SetLastWriteTime(localPath, m);
                 }
@@ -86,7 +84,13 @@ public sealed class BackupEngine
     {
         Directory.CreateDirectory(destinationRoot);
         var files = new List<(MtpEntry Entry,string RelativeFolder)>();
-        CollectFiles(device, remoteFolderPath, "", files, log);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        CollectFiles(device, remoteFolderPath, "", files, visited, log);
+
+        var manifestIndex = incremental
+            ? await LoadManifestIndexAsync(destinationRoot, log)
+            : new Dictionary<string, BackupRecord>(StringComparer.OrdinalIgnoreCase);
+
         int copied = 0, skipped = 0, failed = 0;
         long bytesCopied = 0;
         int total = files.Count;
@@ -97,22 +101,13 @@ public sealed class BackupEngine
             var item = files[index];
             string localDir = string.IsNullOrWhiteSpace(item.RelativeFolder) ? destinationRoot : Path.Combine(destinationRoot, item.RelativeFolder);
             Directory.CreateDirectory(localDir);
-            string expectedPath = Path.Combine(localDir, SanitizeFileName(item.Entry.Name));
             progress?.Invoke(index, total, item.Entry.FullName);
 
-            if (incremental && File.Exists(expectedPath) && item.Entry.Length is long expectedLength)
+            if (incremental && await CanSkipIncrementalAsync(item.Entry, manifestIndex, verifySha256, log))
             {
-                try
-                {
-                    if (new FileInfo(expectedPath).Length == expectedLength)
-                    {
-                        skipped++;
-                        log($"HOPPAR ÖVER oförändrad fil: {item.Entry.FullName}");
-                        progress?.Invoke(index + 1, total, item.Entry.FullName);
-                        continue;
-                    }
-                }
-                catch { }
+                skipped++;
+                progress?.Invoke(index + 1, total, item.Entry.FullName);
+                continue;
             }
 
             try
@@ -120,6 +115,7 @@ public sealed class BackupEngine
                 var rec = await BackupOneFileAsync(device, item.Entry, localDir, preserveDates, verifySha256, log);
                 bytesCopied += rec.Size;
                 copied++;
+                manifestIndex[rec.RemotePath] = rec;
                 try { await AppendManifestAsync(destinationRoot, rec); }
                 catch (Exception mex) { log("MANIFEST VARNING: " + mex.GetBaseException().Message); }
             }
@@ -133,17 +129,84 @@ public sealed class BackupEngine
         return new FolderBackupResult(copied, skipped, failed, bytesCopied);
     }
 
-    private void CollectFiles(MtpDeviceInfo device,string remoteFolder,string relativeFolder,List<(MtpEntry Entry,string RelativeFolder)> files,Action<string> log)
+    private async Task<bool> CanSkipIncrementalAsync(MtpEntry entry,Dictionary<string,BackupRecord> manifestIndex,bool verifySha256,Action<string> log)
     {
-        var entries = _mtp.GetEntries(device, remoteFolder);
+        if (!manifestIndex.TryGetValue(entry.FullName, out var old)) return false;
+        if (entry.Length is long sourceSize && sourceSize >= 0 && old.Size != sourceSize) return false;
+        if (string.IsNullOrWhiteSpace(old.LocalPath) || !File.Exists(old.LocalPath)) return false;
+        try
+        {
+            if (new FileInfo(old.LocalPath).Length != old.Size) return false;
+            if (verifySha256)
+            {
+                if (string.IsNullOrWhiteSpace(old.Sha256) || old.Sha256 == "NOT_CHECKED") return false;
+                string currentHash = await Sha256Async(old.LocalPath);
+                if (!string.Equals(currentHash, old.Sha256, StringComparison.OrdinalIgnoreCase))
+                {
+                    log($"INKREMENTELL KONTROLL: hash skiljer sig, kopierar igen: {entry.FullName}");
+                    return false;
+                }
+            }
+            log($"HOPPAR ÖVER verifierad oförändrad fil: {entry.FullName}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log($"INKREMENTELL VARNING: kunde inte verifiera tidigare backup, kopierar igen: {ex.GetBaseException().Message}");
+            return false;
+        }
+    }
+
+    private void CollectFiles(MtpDeviceInfo device,string remoteFolder,string relativeFolder,List<(MtpEntry Entry,string RelativeFolder)> files,HashSet<string> visited,Action<string> log)
+    {
+        if (!visited.Add(remoteFolder))
+        {
+            log($"VARNING: mappcykel upptäckt och hoppades över: {remoteFolder}");
+            return;
+        }
+
+        IReadOnlyList<MtpEntry> entries;
+        try { entries = _mtp.GetEntries(device, remoteFolder); }
+        catch (Exception ex)
+        {
+            log($"VARNING: kunde inte läsa mappen {remoteFolder}; fortsätter med övriga mappar. {ex.GetBaseException().Message}");
+            return;
+        }
+
         foreach (var entry in entries)
         {
             if (!entry.IsDirectory) { files.Add((entry, relativeFolder)); continue; }
             string safeFolder = SanitizeFileName(entry.Name);
             string childRelative = string.IsNullOrWhiteSpace(relativeFolder) ? safeFolder : Path.Combine(relativeFolder, safeFolder);
             log($"Läser undermapp: {entry.FullName}");
-            CollectFiles(device, entry.FullName, childRelative, files, log);
+            CollectFiles(device, entry.FullName, childRelative, files, visited, log);
         }
+    }
+
+    private static async Task<Dictionary<string,BackupRecord>> LoadManifestIndexAsync(string root,Action<string> log)
+    {
+        var index = new Dictionary<string,BackupRecord>(StringComparer.OrdinalIgnoreCase);
+        string path = Path.Combine(root,"backup-manifest.jsonl");
+        if (!File.Exists(path)) return index;
+        try
+        {
+            foreach (string line in await File.ReadAllLinesAsync(path))
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                try
+                {
+                    var rec = JsonSerializer.Deserialize<BackupRecord>(line);
+                    if (rec is not null) index[rec.RemotePath] = rec;
+                }
+                catch { }
+            }
+            log($"Inkrementellt manifest laddat: {index.Count} filpost(er).");
+        }
+        catch (Exception ex)
+        {
+            log("MANIFEST VARNING: tidigare manifest kunde inte läsas. " + ex.GetBaseException().Message);
+        }
+        return index;
     }
 
     public static async Task AppendManifestAsync(string root, BackupRecord record)
