@@ -26,12 +26,10 @@ public sealed class BackupEngine
         {
             log($"1/5 Hämtar från telefon: {source.FullName}");
             await Task.Run(() => _mtp.DownloadFile(device, source.FullName, tempPath));
-
             log("2/5 Kontrollerar filstorlek");
             long size = new FileInfo(tempPath).Length;
             if (source.Length is long expected && expected >= 0 && size != expected)
                 throw new IOException($"Storleken stämmer inte. Telefon: {expected} byte, backup: {size} byte.");
-
             string hash = "NOT_CHECKED";
             if (verifySha256)
             {
@@ -39,10 +37,8 @@ public sealed class BackupEngine
                 hash = await Sha256Async(tempPath);
             }
             else log("3/5 SHA-256 hoppades över");
-
             log("4/5 Slutför filen");
             File.Move(tempPath, localPath);
-
             if (preserveDates)
             {
                 try
@@ -69,7 +65,6 @@ public sealed class BackupEngine
                     log("VARNING: kunde inte sätta originaldatum, men filen är sparad. " + dateEx.GetBaseException().Message);
                 }
             }
-
             log($"5/5 Klar: {localPath}");
             return new(source.FullName, localPath, size, ValidDate(source.DateCreated), ValidDate(source.DateModified), DateTime.Now, hash);
         }
@@ -80,12 +75,13 @@ public sealed class BackupEngine
         }
     }
 
-    public async Task<FolderBackupResult> BackupFolderRecursiveAsync(MtpDeviceInfo device,string remoteFolderPath,string destinationRoot,bool preserveDates,bool verifySha256,bool incremental,Action<string> log,Action<int,int,string>? progress = null)
+    public async Task<FolderBackupResult> BackupFolderRecursiveAsync(MtpDeviceInfo device,string remoteFolderPath,string destinationRoot,bool preserveDates,bool verifySha256,bool incremental,Action<string> log,Action<int,int,string>? progress = null,CancellationToken cancellationToken = default,Func<bool>? isPaused = null)
     {
         Directory.CreateDirectory(destinationRoot);
+        cancellationToken.ThrowIfCancellationRequested();
         var files = new List<(MtpEntry Entry,string RelativeFolder)>();
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        CollectFiles(device, remoteFolderPath, "", files, visited, log);
+        CollectFiles(device, remoteFolderPath, "", files, visited, log, cancellationToken);
 
         var manifestIndex = incremental
             ? await LoadManifestIndexAsync(destinationRoot, log)
@@ -98,6 +94,9 @@ public sealed class BackupEngine
 
         for (int index = 0; index < total; index++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            await WaitWhilePausedAsync(isPaused, cancellationToken, log);
+
             var item = files[index];
             string localDir = string.IsNullOrWhiteSpace(item.RelativeFolder) ? destinationRoot : Path.Combine(destinationRoot, item.RelativeFolder);
             Directory.CreateDirectory(localDir);
@@ -113,12 +112,14 @@ public sealed class BackupEngine
             try
             {
                 var rec = await BackupOneFileAsync(device, item.Entry, localDir, preserveDates, verifySha256, log);
+                cancellationToken.ThrowIfCancellationRequested();
                 bytesCopied += rec.Size;
                 copied++;
                 manifestIndex[rec.RemotePath] = rec;
                 try { await AppendManifestAsync(destinationRoot, rec); }
                 catch (Exception mex) { log("MANIFEST VARNING: " + mex.GetBaseException().Message); }
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 failed++;
@@ -127,6 +128,18 @@ public sealed class BackupEngine
             progress?.Invoke(index + 1, total, item.Entry.FullName);
         }
         return new FolderBackupResult(copied, skipped, failed, bytesCopied);
+    }
+
+    private static async Task WaitWhilePausedAsync(Func<bool>? isPaused,CancellationToken token,Action<string> log)
+    {
+        if (isPaused?.Invoke() != true) return;
+        log("BACKUP PAUSAD – väntar på Fortsätt.");
+        while (isPaused?.Invoke() == true)
+        {
+            token.ThrowIfCancellationRequested();
+            await Task.Delay(200, token);
+        }
+        log("BACKUP FORTSÄTTER.");
     }
 
     private async Task<bool> CanSkipIncrementalAsync(MtpEntry entry,Dictionary<string,BackupRecord> manifestIndex,bool verifySha256,Action<string> log)
@@ -157,14 +170,14 @@ public sealed class BackupEngine
         }
     }
 
-    private void CollectFiles(MtpDeviceInfo device,string remoteFolder,string relativeFolder,List<(MtpEntry Entry,string RelativeFolder)> files,HashSet<string> visited,Action<string> log)
+    private void CollectFiles(MtpDeviceInfo device,string remoteFolder,string relativeFolder,List<(MtpEntry Entry,string RelativeFolder)> files,HashSet<string> visited,Action<string> log,CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         if (!visited.Add(remoteFolder))
         {
             log($"VARNING: mappcykel upptäckt och hoppades över: {remoteFolder}");
             return;
         }
-
         IReadOnlyList<MtpEntry> entries;
         try { entries = _mtp.GetEntries(device, remoteFolder); }
         catch (Exception ex)
@@ -172,14 +185,14 @@ public sealed class BackupEngine
             log($"VARNING: kunde inte läsa mappen {remoteFolder}; fortsätter med övriga mappar. {ex.GetBaseException().Message}");
             return;
         }
-
         foreach (var entry in entries)
         {
+            token.ThrowIfCancellationRequested();
             if (!entry.IsDirectory) { files.Add((entry, relativeFolder)); continue; }
             string safeFolder = SanitizeFileName(entry.Name);
             string childRelative = string.IsNullOrWhiteSpace(relativeFolder) ? safeFolder : Path.Combine(relativeFolder, safeFolder);
             log($"Läser undermapp: {entry.FullName}");
-            CollectFiles(device, entry.FullName, childRelative, files, visited, log);
+            CollectFiles(device, entry.FullName, childRelative, files, visited, log, token);
         }
     }
 
