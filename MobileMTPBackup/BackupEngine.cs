@@ -5,6 +5,7 @@ using System.Text.Json;
 namespace MobileMTPBackup;
 
 public sealed record BackupRecord(string RemotePath,string LocalPath,long Size,DateTime? SourceCreated,DateTime? SourceModified,DateTime BackedUpAt,string Sha256);
+public sealed record FolderBackupResult(int FilesCopied,int FilesSkipped,int FilesFailed,long BytesCopied);
 
 public sealed class BackupEngine
 {
@@ -66,12 +67,93 @@ public sealed class BackupEngine
         }
         catch
         {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+            throw;
+        }
+    }
+
+    public async Task<FolderBackupResult> BackupFolderRecursiveAsync(
+        MtpDeviceInfo device,
+        string remoteFolderPath,
+        string destinationRoot,
+        bool preserveDates,
+        bool verifySha256,
+        bool incremental,
+        Action<string> log,
+        Action<int,int,string>? progress = null)
+    {
+        Directory.CreateDirectory(destinationRoot);
+        var files = new List<(MtpEntry Entry,string RelativeFolder)>();
+        CollectFiles(device, remoteFolderPath, "", files, log);
+
+        int copied = 0, skipped = 0, failed = 0;
+        long bytesCopied = 0;
+        int total = files.Count;
+        log($"Hel-mapp backup: {total} fil(er) hittades i {remoteFolderPath}.");
+
+        for (int index = 0; index < total; index++)
+        {
+            var item = files[index];
+            string localDir = string.IsNullOrWhiteSpace(item.RelativeFolder)
+                ? destinationRoot
+                : Path.Combine(destinationRoot, item.RelativeFolder);
+            Directory.CreateDirectory(localDir);
+            string expectedPath = Path.Combine(localDir, SanitizeFileName(item.Entry.Name));
+
+            progress?.Invoke(index, total, item.Entry.FullName);
+
+            if (incremental && File.Exists(expectedPath) && item.Entry.Length is long expectedLength)
+            {
+                try
+                {
+                    if (new FileInfo(expectedPath).Length == expectedLength)
+                    {
+                        skipped++;
+                        log($"HOPPAR ÖVER oförändrad fil: {item.Entry.FullName}");
+                        progress?.Invoke(index + 1, total, item.Entry.FullName);
+                        continue;
+                    }
+                }
+                catch { }
+            }
+
             try
             {
-                if (File.Exists(tempPath)) File.Delete(tempPath);
+                var rec = await BackupOneFileAsync(device, item.Entry, localDir, preserveDates, verifySha256, log);
+                bytesCopied += rec.Size;
+                copied++;
+                try { await AppendManifestAsync(destinationRoot, rec); }
+                catch (Exception mex) { log("MANIFEST VARNING: " + mex.GetBaseException().Message); }
             }
-            catch { }
-            throw;
+            catch (Exception ex)
+            {
+                failed++;
+                log($"FILFEL: {item.Entry.FullName}: {ex.GetBaseException().Message}");
+            }
+
+            progress?.Invoke(index + 1, total, item.Entry.FullName);
+        }
+
+        return new FolderBackupResult(copied, skipped, failed, bytesCopied);
+    }
+
+    private void CollectFiles(MtpDeviceInfo device,string remoteFolder,string relativeFolder,List<(MtpEntry Entry,string RelativeFolder)> files,Action<string> log)
+    {
+        var entries = _mtp.GetEntries(device, remoteFolder);
+        foreach (var entry in entries)
+        {
+            if (!entry.IsDirectory)
+            {
+                files.Add((entry, relativeFolder));
+                continue;
+            }
+
+            string safeFolder = SanitizeFileName(entry.Name);
+            string childRelative = string.IsNullOrWhiteSpace(relativeFolder)
+                ? safeFolder
+                : Path.Combine(relativeFolder, safeFolder);
+            log($"Läser undermapp: {entry.FullName}");
+            CollectFiles(device, entry.FullName, childRelative, files, log);
         }
     }
 
