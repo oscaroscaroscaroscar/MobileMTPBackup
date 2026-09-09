@@ -27,5 +27,5 @@ jobs:
           Write-Host "EXE size: $size bytes"
       - uses: actions/upload-artifact@v4
         with:
-          name: MobileMTPBackup-v5.5-Windows-x64
+          name: MobileMTPBackup-v5.6-Windows-x64
           path: publish/win-x64/
