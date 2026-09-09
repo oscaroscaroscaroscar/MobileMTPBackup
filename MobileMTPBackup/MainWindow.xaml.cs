@@ -78,7 +78,7 @@ public partial class MainWindow : Window
         {
             token.ThrowIfCancellationRequested();if(!visited.Add(path))return;IReadOnlyList<MtpEntry> entries;
             try{entries=path=="\\"?_mtp.GetRootEntries(device):_mtp.GetEntries(device,path);}
-            catch(Exception ex){inaccessible++;Log($"FÖRHANDSGRANSKNING VARNING: hoppar över {path}: {ex.GetBaseException().Message}");return;}
+            catch(Exception ex){inaccessible++;Dispatcher.Invoke(()=>Log($"FÖRHANDSGRANSKNING VARNING: hoppar över {path}: {ex.GetBaseException().Message}"));return;}
             foreach(var entry in entries){token.ThrowIfCancellationRequested();if(entry.IsDirectory){folders++;Walk(entry.FullName);}else{files++;if(entry.Length is long len&&len>0)bytes+=len;}}
         }
         Walk(remoteFolder);return new PreviewInfo(files,folders,bytes,inaccessible);
