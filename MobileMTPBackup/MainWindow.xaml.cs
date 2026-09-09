@@ -40,7 +40,7 @@ public partial class MainWindow : Window
             var preview=await Task.Run(()=>ScanFolder(d,remoteFolder,_folderCts.Token));EnsureFreeSpace(basePath,preview.Bytes);
             Log($"FÖRKONTROLL OK: {preview.Files} filer, cirka {FormatBytes(preview.Bytes)}, {preview.InaccessibleFolders} otillgängliga mappar hoppades över.");
             string folderName=remoteFolder=="\\"?"Telefonrot":Path.GetFileName(remoteFolder.TrimEnd('\\'));string root=Path.Combine(basePath,Sanitize(d.Name),Sanitize(folderName));Directory.CreateDirectory(root);reportRoot=root;
-            BackupFolderButton.IsEnabled=false;PauseButton.IsEnabled=true;ResumeButton.IsEnabled=false;CancelButton.IsEnabled=true;BackupProgressBar.Value=0;BackupStatusText.Text="Hel-mapp backup startar...";
+            BackupFolderButton.IsEnabled=false;AutoBackupButton.IsEnabled=false;PauseButton.IsEnabled=true;ResumeButton.IsEnabled=false;CancelButton.IsEnabled=true;BackupProgressBar.Value=0;BackupStatusText.Text="Hel-mapp backup startar...";
             Log($"HEL-MAPP BACKUP: {remoteFolder} -> {root}");
             var result=await _backup.BackupFolderRecursiveAsync(d,remoteFolder,root,PreserveDatesCheckBox.IsChecked==true,VerifyCheckBox.IsChecked==true,IncrementalCheckBox.IsChecked==true,Log,(done,total,path)=>Dispatcher.Invoke(()=>{BackupProgressBar.Value=total==0?0:(double)done/total*100;BackupStatusText.Text=$"{done}/{total}: {path}";}),_folderCts.Token,()=>_isPaused);
             BackupProgressBar.Value=100;BackupStatusText.Text=$"KLAR: {result.FilesCopied} kopierade, {result.FilesSkipped} hoppades över, {result.FilesFailed} fel.";Log($"HEL-MAPP KLAR: kopierade={result.FilesCopied}, överhoppade={result.FilesSkipped}, fel={result.FilesFailed}, byte={result.BytesCopied}");
@@ -48,7 +48,7 @@ public partial class MainWindow : Window
         }
         catch(OperationCanceledException){BackupStatusText.Text="AVBRUTEN av användaren.";Log("HEL-MAPP BACKUP AVBRUTEN av användaren.");if(reportRoot is not null)try{string report=await SessionReportWriter.WriteAsync(reportRoot,new BackupSessionReport(AppVersion,d.Name,remoteFolder,reportRoot,startedAt,DateTime.Now,0,0,0,0,true,null));Log("SESSIONSRAPPORT: "+report);}catch(Exception rex){Log("RAPPORT VARNING: "+rex.GetBaseException().Message);}}
         catch(Exception ex){BackupStatusText.Text="Hel-mapp backup misslyckades – se loggen.";Log("HEL-MAPP FEL: "+ex);if(reportRoot is not null)try{string report=await SessionReportWriter.WriteAsync(reportRoot,new BackupSessionReport(AppVersion,d.Name,remoteFolder,reportRoot,startedAt,DateTime.Now,0,0,1,0,false,ex.GetBaseException().Message));Log("SESSIONSRAPPORT: "+report);}catch(Exception rex){Log("RAPPORT VARNING: "+rex.GetBaseException().Message);}MessageBox.Show(ex.ToString(),"HEL-MAPP BACKUP FEL",MessageBoxButton.OK,MessageBoxImage.Error);}
-        finally{_isPaused=false;_folderCts?.Dispose();_folderCts=null;BackupFolderButton.IsEnabled=true;PauseButton.IsEnabled=false;ResumeButton.IsEnabled=false;CancelButton.IsEnabled=false;}
+        finally{_isPaused=false;_folderCts?.Dispose();_folderCts=null;BackupFolderButton.IsEnabled=true;AutoBackupButton.IsEnabled=true;PauseButton.IsEnabled=false;ResumeButton.IsEnabled=false;CancelButton.IsEnabled=false;}
     }
 
     private static string AppVersion=>typeof(MainWindow).Assembly.GetName().Version?.ToString()??"okänd";
@@ -80,7 +80,6 @@ public partial class MainWindow : Window
     private static long GetFreeSpace(string destination){string full=Path.GetFullPath(destination);string? root=Path.GetPathRoot(full);if(string.IsNullOrWhiteSpace(root))throw new IOException("Kan inte avgöra backupdisk.");return new DriveInfo(root).AvailableFreeSpace;}
     private static string FormatBytes(long value){string[] units={"B","KB","MB","GB","TB"};double v=Math.Max(0,value);int i=0;while(v>=1024&&i<units.Length-1){v/=1024;i++;}return $"{v:0.##} {units[i]}";}
     private void SystemTest_Click(object sender,RoutedEventArgs e){RefreshDevices();var d=SelectedDevice;if(d is null){MessageBox.Show("Ingen MTP-telefon hittades. Kontrollera att Enhetshanteraren visar MTP USB Device och klicka sedan Sök igen.","SYSTEMTEST");return;}try{var entries=_mtp.GetRootEntries(d);MessageBox.Show($"MTP OK: {d.Name}\nRoot innehåller {entries.Count} objekt.\n{_mtp.GetDiagnosticSummary()}","SYSTEMTEST");}catch(Exception ex){MessageBox.Show(ex.ToString(),"SYSTEMTEST FEL");}}
-    private void AutoBackup_Click(object sender,RoutedEventArgs e)=>MessageBox.Show("Auto-backup media kommer i nästa version.");
     private static string Sanitize(string value){foreach(char c in Path.GetInvalidFileNameChars())value=value.Replace(c,'_');return string.IsNullOrWhiteSpace(value)?"unnamed":value;}
 }
 public sealed record PreviewInfo(int Files,int Folders,long Bytes,int InaccessibleFolders);
