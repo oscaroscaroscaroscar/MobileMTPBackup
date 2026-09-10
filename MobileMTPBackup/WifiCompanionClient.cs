@@ -1,4 +1,4 @@
-using System.Globalization;
+using System.IO;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -48,7 +48,8 @@ public sealed class WifiCompanionClient(string host,int port)
             while(remaining>0){int n=await stream.ReadAsync(buffer.AsMemory(0,(int)Math.Min(buffer.Length,remaining)),ct);if(n<=0)throw new EndOfStreamException("Wi-Fi-överföringen avbröts.");await output.WriteAsync(buffer.AsMemory(0,n),ct);remaining-=n;}
         }
         string remoteHash=await HashAsync(item.Id,ct);
-        string localHash=Convert.ToHexString(await SHA256.HashDataAsync(File.OpenRead(partial),ct)).ToLowerInvariant();
+        await using var input=File.OpenRead(partial);
+        string localHash=Convert.ToHexString(await SHA256.HashDataAsync(input,ct)).ToLowerInvariant();
         if(!string.Equals(remoteHash,localHash,StringComparison.OrdinalIgnoreCase)){File.Delete(partial);throw new IOException("SHA-256 stämmer inte.");}
         if(File.Exists(destination)) File.Delete(destination); File.Move(partial,destination);
         if(item.ModifiedUnix>0){var dt=DateTimeOffset.FromUnixTimeSeconds(item.ModifiedUnix).LocalDateTime;try{File.SetLastWriteTime(destination,dt);}catch{}}
