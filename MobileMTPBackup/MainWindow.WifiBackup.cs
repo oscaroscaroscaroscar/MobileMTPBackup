@@ -13,10 +13,11 @@ public partial class MainWindow
         if(_wifiCts is not null){MessageBox.Show("En Wi-Fi-backup kör redan.","WI-FI BACKUP");return;}
         string host=WifiHostTextBox.Text.Trim();
         if(string.IsNullOrWhiteSpace(host)||!int.TryParse(WifiPortTextBox.Text.Trim(),out int port)||port is <1 or >65535){MessageBox.Show("Kontrollera IP-adress och port.","WI-FI BACKUP");return;}
+        string pairing=WifiPairCodeTextBox.Text.Trim();if(pairing.Length!=6||pairing.Any(c=>!char.IsDigit(c))){MessageBox.Show("Ange den 6-siffriga parkoden från Android Companion.","WI-FI BACKUP");return;}
         string root=DestinationTextBox.Text.Trim();if(string.IsNullOrWhiteSpace(root)){MessageBox.Show("Välj backupmapp.","WI-FI BACKUP");return;}
 
         DateTime startedAt=DateTime.Now;string? reportRoot=null;int copied=0,failed=0;long bytesCopied=0;
-        _wifiCts=new CancellationTokenSource();var token=_wifiCts.Token;var client=new WifiCompanionClient(host,port);
+        _wifiCts=new CancellationTokenSource();var token=_wifiCts.Token;var client=new WifiCompanionClient(host,port,pairing);
         try
         {
             WifiBackupButton.IsEnabled=false;WifiCancelButton.IsEnabled=true;BackupProgressBar.Value=0;
