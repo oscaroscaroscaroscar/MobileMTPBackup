@@ -7,6 +7,25 @@ public partial class MainWindow
 {
     private CancellationTokenSource? _wifiCts;
 
+    private static string SafeFileName(string value)
+    {
+        var invalid=Path.GetInvalidFileNameChars();
+        string safe=string.Concat(value.Select(ch=>invalid.Contains(ch)?'_':ch)).Trim();
+        return string.IsNullOrWhiteSpace(safe)?"unnamed":safe;
+    }
+
+    private static string SafeRelativeMediaPath(string relativePath)
+    {
+        if(string.IsNullOrWhiteSpace(relativePath))return "Media";
+        var parts=relativePath.Replace('\\','/').Split('/',StringSplitOptions.RemoveEmptyEntries)
+            .Where(p=>p!="."&&p!="..")
+            .Select(SafeFileName)
+            .Where(p=>!string.IsNullOrWhiteSpace(p))
+            .Take(12)
+            .ToArray();
+        return parts.Length==0?"Media":Path.Combine(parts);
+    }
+
     private async void WifiBackupMedia_Click(object sender,RoutedEventArgs e)
     {
         if(!IsWifiMode){MessageBox.Show("Välj Wi-Fi som anslutningsläge först.","WI-FI BACKUP");return;}
@@ -24,26 +43,27 @@ public partial class MainWindow
             WifiStatusText.Text="Läser medialistan från telefonen...";
             var items=await client.ListAsync(token);token.ThrowIfCancellationRequested();
 
-            string library=Path.Combine(root,"WiFi","Media");Directory.CreateDirectory(library);reportRoot=library;
+            string library=Path.Combine(root,"WiFi");Directory.CreateDirectory(library);reportRoot=library;
             bool incremental=IncrementalCheckBox.IsChecked==true;bool verify=VerifyCheckBox.IsChecked==true;
             var work=new List<(WifiMediaItem Item,string Target,bool Skip)>();long requiredBytes=0;int checkedCount=0;
             foreach(var item in items)
             {
                 token.ThrowIfCancellationRequested();
-                string safe=string.Concat(item.Name.Select(ch=>Path.GetInvalidFileNameChars().Contains(ch)?'_':ch));
-                string target=Path.Combine(library,$"{item.Id}_{safe}");bool skip=false;
+                string folder=Path.Combine(library,SafeRelativeMediaPath(item.RelativePath));
+                string safe=SafeFileName(item.Name);
+                string target=Path.Combine(folder,$"{item.Id}_{safe}");bool skip=false;
                 if(incremental&&File.Exists(target))
                 {
                     WifiStatusText.Text=$"Kontrollerar befintlig fil {checkedCount+1}/{items.Count}: {item.Name}";
                     skip=await client.CanSkipExistingAsync(item,target,verify,token);
-                    if(!skip)target=Path.Combine(library,$"{item.Id}_{DateTime.Now:yyyyMMdd-HHmmssfff}_{safe}");
+                    if(!skip)target=Path.Combine(folder,$"{item.Id}_{DateTime.Now:yyyyMMdd-HHmmssfff}_{safe}");
                 }
                 if(skip)skipped++;else requiredBytes+=Math.Max(0,item.Size);
                 work.Add((item,target,skip));checkedCount++;
             }
             EnsureFreeSpace(root,requiredBytes);
             Log($"WI-FI FÖRKONTROLL: {items.Count} totalt, {skipped} kan hoppas över, cirka {FormatBytes(requiredBytes)} behöver kopieras.");
-            Log($"WI-FI BACKUP START: {host}:{port} -> {library}");
+            Log($"WI-FI BACKUP START: {host}:{port} -> {library}; Android-mappar bevaras när MediaStore rapporterar dem.");
 
             int done=0;
             foreach(var entry in work)
