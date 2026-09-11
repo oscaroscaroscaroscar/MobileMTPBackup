@@ -14,11 +14,13 @@ import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.security.MessageDigest
+import java.security.SecureRandom
 import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
     private var server: ServerSocket? = null
     private lateinit var status: TextView
+    private val pairingCode: String = SecureRandom().nextInt(1_000_000).toString().padStart(6, '0')
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,13 +76,15 @@ class MainActivity : AppCompatActivity() {
         val count = try { queryMedia().size } catch (_: Exception) { -1 }
         val countText = if (count >= 0) count.toString() else "okänt"
         runOnUiThread {
-            status.text = "Mobile MTP Backup Companion 0.3\n\n" +
+            status.text = "Mobile MTP Backup Companion 0.4\n\n" +
                 "Wi-Fi-tjänst aktiv\n" +
                 "IP-adress: $ip\n" +
                 "Port: 8765\n" +
+                "Parkod: $pairingCode\n" +
                 "Mediaåtkomst: $permission\n" +
                 "Bilder/video synliga: $countText\n\n" +
-                "Ange IP-adressen ovan i Windows-programmet.\n" +
+                "Ange IP-adressen och parkoden ovan i Windows-programmet.\n" +
+                "Parkoden gäller bara tills appen stängs.\n" +
                 "Låt appen vara öppen under testet."
         }
     }
@@ -93,10 +97,17 @@ class MainActivity : AppCompatActivity() {
                 val socket = server!!.accept()
                 try {
                     val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-                    val command = reader.readLine()?.trim().orEmpty()
+                    val raw = reader.readLine()?.trim().orEmpty()
                     val out = socket.getOutputStream()
+                    val prefix = "AUTH $pairingCode "
+                    if (!raw.startsWith(prefix)) {
+                        out.write("ERROR unauthorized\n".toByteArray())
+                        out.flush()
+                        continue
+                    }
+                    val command = raw.removePrefix(prefix)
                     when {
-                        command == "HELLO" -> out.write("MOBILE_MTP_BACKUP_COMPANION/0.3\n".toByteArray())
+                        command == "HELLO" -> out.write("MOBILE_MTP_BACKUP_COMPANION/0.4\n".toByteArray())
                         command == "LIST" -> {
                             queryMedia().forEach { item ->
                                 out.write("${item.id}\t${item.name}\t${item.size}\t${item.modified}\t${item.mime}\n".toByteArray())
