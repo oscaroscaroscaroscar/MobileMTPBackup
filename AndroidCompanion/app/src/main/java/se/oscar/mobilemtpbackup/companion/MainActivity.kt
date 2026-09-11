@@ -76,7 +76,7 @@ class MainActivity : AppCompatActivity() {
         val count = try { queryMedia().size } catch (_: Exception) { -1 }
         val countText = if (count >= 0) count.toString() else "okänt"
         runOnUiThread {
-            status.text = "Mobile MTP Backup Companion 0.4\n\n" +
+            status.text = "Mobile MTP Backup Companion 0.5\n\n" +
                 "Wi-Fi-tjänst aktiv\n" +
                 "IP-adress: $ip\n" +
                 "Port: 8765\n" +
@@ -88,6 +88,8 @@ class MainActivity : AppCompatActivity() {
                 "Låt appen vara öppen under testet."
         }
     }
+
+    private fun protocolField(value: String): String = value.replace('\t', ' ').replace('\r', ' ').replace('\n', ' ')
 
     private fun startServer() = thread(name = "wifi-backup-server") {
         try {
@@ -107,10 +109,10 @@ class MainActivity : AppCompatActivity() {
                     }
                     val command = raw.removePrefix(prefix)
                     when {
-                        command == "HELLO" -> out.write("MOBILE_MTP_BACKUP_COMPANION/0.4\n".toByteArray())
+                        command == "HELLO" -> out.write("MOBILE_MTP_BACKUP_COMPANION/0.5\n".toByteArray())
                         command == "LIST" -> {
                             queryMedia().forEach { item ->
-                                out.write("${item.id}\t${item.name}\t${item.size}\t${item.modified}\t${item.mime}\n".toByteArray())
+                                out.write("${item.id}\t${protocolField(item.name)}\t${item.size}\t${item.modified}\t${protocolField(item.mime)}\t${protocolField(item.relativePath)}\n".toByteArray())
                             }
                             out.write("END\n".toByteArray())
                         }
@@ -156,13 +158,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun queryMedia(): List<MediaItem> {
         val result = mutableListOf<MediaItem>()
-        val projection = arrayOf(
+        val columns = mutableListOf(
             MediaStore.Files.FileColumns._ID,
             MediaStore.Files.FileColumns.DISPLAY_NAME,
             MediaStore.Files.FileColumns.SIZE,
             MediaStore.Files.FileColumns.DATE_MODIFIED,
             MediaStore.Files.FileColumns.MIME_TYPE
         )
+        if (Build.VERSION.SDK_INT >= 29) columns += MediaStore.Files.FileColumns.RELATIVE_PATH
+        val projection = columns.toTypedArray()
         contentResolver.query(
             MediaStore.Files.getContentUri("external"),
             projection,
@@ -175,10 +179,12 @@ class MainActivity : AppCompatActivity() {
             val size = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
             val modified = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
             val mime = c.getColumnIndexOrThrow(MediaStore.Files.FileColumns.MIME_TYPE)
+            val relativePath = if (Build.VERSION.SDK_INT >= 29) c.getColumnIndex(MediaStore.Files.FileColumns.RELATIVE_PATH) else -1
             while (c.moveToNext()) {
                 val m = c.getString(mime) ?: continue
                 if (m.startsWith("image/") || m.startsWith("video/")) {
-                    result += MediaItem(c.getLong(id), c.getString(name) ?: "unnamed", c.getLong(size), c.getLong(modified), m)
+                    val rel = if (relativePath >= 0) c.getString(relativePath).orEmpty() else ""
+                    result += MediaItem(c.getLong(id), c.getString(name) ?: "unnamed", c.getLong(size), c.getLong(modified), m, rel)
                 }
             }
         }
@@ -190,5 +196,5 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    data class MediaItem(val id: Long, val name: String, val size: Long, val modified: Long, val mime: String)
+    data class MediaItem(val id: Long, val name: String, val size: Long, val modified: Long, val mime: String, val relativePath: String)
 }
