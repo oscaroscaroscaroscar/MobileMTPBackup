@@ -34,6 +34,29 @@ public sealed class WifiCompanionClient(string host,int port,string pairingCode)
         return result;
     }
 
+    public async Task<bool> CanSkipExistingAsync(WifiMediaItem item,string destination,bool verifyHash,CancellationToken ct)
+    {
+        if(!File.Exists(destination))return false;
+        var info=new FileInfo(destination);
+        if(item.Size>=0&&info.Length!=item.Size)return false;
+
+        if(verifyHash)
+        {
+            string remoteHash=await HashAsync(item.Id,ct);
+            if(remoteHash.Length!=64||remoteHash.Any(c=>!Uri.IsHexDigit(c)))return false;
+            await using var input=File.OpenRead(destination);
+            string localHash=Convert.ToHexString(await SHA256.HashDataAsync(input,ct)).ToLowerInvariant();
+            return string.Equals(remoteHash,localHash,StringComparison.OrdinalIgnoreCase);
+        }
+
+        if(item.ModifiedUnix>0)
+        {
+            DateTime remote=DateTimeOffset.FromUnixTimeSeconds(item.ModifiedUnix).LocalDateTime;
+            return Math.Abs((info.LastWriteTime-remote).TotalSeconds)<=2;
+        }
+        return true;
+    }
+
     public async Task DownloadVerifiedAsync(WifiMediaItem item,string destination,CancellationToken ct)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
@@ -66,7 +89,7 @@ public sealed class WifiCompanionClient(string host,int port,string pairingCode)
             await using var input=File.OpenRead(partial);
             string localHash=Convert.ToHexString(await SHA256.HashDataAsync(input,ct)).ToLowerInvariant();
             if(!string.Equals(remoteHash,localHash,StringComparison.OrdinalIgnoreCase))throw new IOException("SHA-256 stämmer inte.");
-            if(File.Exists(destination))throw new IOException("Målfilen finns redan: "+destination);
+            if(File.Exists(destination))throw new IOException("Målfilen finns redan men matchar inte källan: "+destination);
             File.Move(partial,destination);
             if(item.ModifiedUnix>0){var dt=DateTimeOffset.FromUnixTimeSeconds(item.ModifiedUnix).LocalDateTime;try{File.SetLastWriteTime(destination,dt);}catch{}}
         }
