@@ -5,7 +5,7 @@ using System.Text;
 
 namespace MobileMTPBackup;
 
-public sealed record WifiMediaItem(long Id,string Name,long Size,long ModifiedUnix,string Mime);
+public sealed record WifiMediaItem(long Id,string Name,long Size,long ModifiedUnix,string Mime,string RelativePath);
 
 public sealed class WifiCompanionClient(string host,int port,string pairingCode)
 {
@@ -29,7 +29,8 @@ public sealed class WifiCompanionClient(string host,int port,string pairingCode)
             string? line=await reader.ReadLineAsync(ct);if(line is null||line=="END")break;
             if(line.StartsWith("ERROR ",StringComparison.Ordinal))throw new IOException("Companion LIST-fel: "+line);
             var p=line.Split('\t');if(p.Length<5)continue;
-            if(long.TryParse(p[0],out var id)&&long.TryParse(p[2],out var size)&&long.TryParse(p[3],out var modified))result.Add(new(id,p[1],size,modified,p[4]));
+            if(long.TryParse(p[0],out var id)&&long.TryParse(p[2],out var size)&&long.TryParse(p[3],out var modified))
+                result.Add(new(id,p[1],size,modified,p[4],p.Length>=6?p[5]:""));
         }
         return result;
     }
