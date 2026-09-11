@@ -7,7 +7,7 @@ namespace MobileMTPBackup;
 
 public sealed record WifiMediaItem(long Id,string Name,long Size,long ModifiedUnix,string Mime);
 
-public sealed class WifiCompanionClient(string host,int port)
+public sealed class WifiCompanionClient(string host,int port,string pairingCode)
 {
     private async Task<TcpClient> ConnectAsync(CancellationToken ct)
     {
@@ -16,10 +16,12 @@ public sealed class WifiCompanionClient(string host,int port)
         return client;
     }
 
+    private byte[] Command(string command)=>Encoding.UTF8.GetBytes($"AUTH {pairingCode} {command}\n");
+
     public async Task<IReadOnlyList<WifiMediaItem>> ListAsync(CancellationToken ct)
     {
         using var client=await ConnectAsync(ct);using var stream=client.GetStream();
-        await stream.WriteAsync(Encoding.UTF8.GetBytes("LIST\n"),ct);await stream.FlushAsync(ct);
+        await stream.WriteAsync(Command("LIST"),ct);await stream.FlushAsync(ct);
         using var reader=new StreamReader(stream,Encoding.UTF8,false,4096,true);
         var result=new List<WifiMediaItem>();
         while(true)
@@ -42,8 +44,9 @@ public sealed class WifiCompanionClient(string host,int port)
             using(var client=await ConnectAsync(ct))
             using(var stream=client.GetStream())
             {
-                await stream.WriteAsync(Encoding.UTF8.GetBytes($"GET {item.Id}\n"),ct);await stream.FlushAsync(ct);
+                await stream.WriteAsync(Command($"GET {item.Id}"),ct);await stream.FlushAsync(ct);
                 string header=await ReadAsciiLineAsync(stream,ct);
+                if(header.StartsWith("ERROR ",StringComparison.Ordinal))throw new IOException("Companion GET-fel: "+header);
                 if(!header.StartsWith("DATA ",StringComparison.Ordinal)||!long.TryParse(header[5..],out long expected))throw new IOException("Ogiltigt GET-svar: "+header);
                 if(expected<0)throw new IOException("Ogiltig filstorlek från telefonen.");
                 if(item.Size>0&&expected!=item.Size)throw new IOException("Filstorleken ändrades på telefonen.");
@@ -77,7 +80,7 @@ public sealed class WifiCompanionClient(string host,int port)
     public async Task<string> HashAsync(long id,CancellationToken ct)
     {
         using var client=await ConnectAsync(ct);using var stream=client.GetStream();
-        await stream.WriteAsync(Encoding.UTF8.GetBytes($"HASH {id}\n"),ct);await stream.FlushAsync(ct);
+        await stream.WriteAsync(Command($"HASH {id}"),ct);await stream.FlushAsync(ct);
         string reply=(await ReadAsciiLineAsync(stream,ct)).Trim();
         if(reply.StartsWith("ERROR ",StringComparison.Ordinal))throw new IOException("Companion HASH-fel: "+reply);
         return reply;
