@@ -20,8 +20,8 @@ public partial class MainWindow
             string reply=await client.HelloAsync(cts.Token);
             if(reply=="ERROR unauthorized")throw new IOException("Fel parnyckel.");
             if(!reply.StartsWith("MOBILE_MTP_BACKUP_COMPANION/",StringComparison.Ordinal))throw new IOException("Fel tjänst svarade på porten.");
-            WifiStatusText.Text=$"Wi-Fi OK: {host}:{port} – Companion {reply.Split('/').Last()}, nonce/HMAC godkänd med 64-bitars parnyckel. Filinnehåll använder AES-256-GCM.";
-            Log($"WI-FI HANDSHAKE OK: {reply} från {host}:{port}; 64-bitars parnyckel verifierad utan klartext. Mediaöverföring använder AES-256-GCM per block i v5.25.");
+            WifiStatusText.Text=$"Wi-Fi OK: {host}:{port} – Companion {reply.Split('/').Last()}, nonce/HMAC godkänd. Media, LIST och HASH använder AES-256-GCM.";
+            Log($"WI-FI HANDSHAKE OK: {reply} från {host}:{port}; 64-bitars parnyckel verifierad utan klartext. Media, LIST-metadata och HASH-svar använder AES-256-GCM i v5.26.");
         }
         catch(Exception ex){WifiStatusText.Text="Ingen kompatibel Wi-Fi Companion svarar eller parnyckeln är fel.";Log("WI-FI TEST: "+ex.GetBaseException().Message);MessageBox.Show("Kunde inte verifiera Mobile MTP Backup Companion.\n\n"+ex.GetBaseException().Message,"WI-FI TEST",MessageBoxButton.OK,MessageBoxImage.Information);}
     }
