@@ -59,7 +59,7 @@ class MainActivity : AppCompatActivity() {
     private fun hex(bytes: ByteArray)=bytes.joinToString(""){"%02x".format(it)}
     private fun hmac(nonce:String,command:String):String { val mac=Mac.getInstance("HmacSHA256");mac.init(SecretKeySpec(pairingCode.toByteArray(Charsets.UTF_8),"HmacSHA256"));return hex(mac.doFinal((nonce+"\n"+command).toByteArray(Charsets.UTF_8))) }
     private fun secureEquals(a:String,b:String):Boolean = try { MessageDigest.isEqual(a.lowercase().toByteArray(Charsets.US_ASCII),b.lowercase().toByteArray(Charsets.US_ASCII)) } catch (_:Exception){false}
-    private fun sessionKey(nonce:String):ByteArray = MessageDigest.getInstance("SHA-256").digest("MobileMTPBackup-v5.24\n$pairingCode\n$nonce".toByteArray(Charsets.UTF_8))
+    private fun sessionKey(nonce:String):ByteArray = MessageDigest.getInstance("SHA-256").digest("MobileMTPBackup-v5.25\n$pairingCode\n$nonce".toByteArray(Charsets.UTF_8))
 
     private fun writeEncryptedMedia(input:InputStream,out:java.io.OutputStream,size:Long,key:ByteArray){
         val chunkSize=1024*1024
