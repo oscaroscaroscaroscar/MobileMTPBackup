@@ -28,7 +28,7 @@ public sealed class WifiCompanionClient(string host,int port,string pairingCode)
     }
 
     private byte[] DeriveSessionKey(string nonce)
-        => SHA256.HashData(Encoding.UTF8.GetBytes($"MobileMTPBackup-v5.25\n{pairingCode}\n{nonce}"));
+        => SHA256.HashData(Encoding.UTF8.GetBytes($"MobileMTPBackup-v5.26\n{pairingCode}\n{nonce}"));
 
     public async Task<string> HelloAsync(CancellationToken ct)
     {
@@ -41,8 +41,15 @@ public sealed class WifiCompanionClient(string host,int port,string pairingCode)
     public async Task<IReadOnlyList<WifiMediaItem>> ListAsync(CancellationToken ct)
     {
         var pair=await ConnectAuthenticatedAsync("LIST",ct);using var client=pair.Client;using var stream=pair.Stream;
-        using var reader=new StreamReader(stream,Encoding.UTF8,false,4096,true);var result=new List<WifiMediaItem>();
-        while(true){string? line=await reader.ReadLineAsync(ct);if(line is null||line=="END")break;if(line.StartsWith("ERROR ",StringComparison.Ordinal))throw new IOException("Companion LIST-fel: "+line);var p=line.Split('\t');if(p.Length<5)continue;if(long.TryParse(p[0],out var id)&&long.TryParse(p[2],out var size)&&long.TryParse(p[3],out var modified))result.Add(new(id,p[1],size,modified,p[4],p.Length>=6?p[5]:""));}
+        string body=await ReadEncryptedTextAsync(stream,pair.SessionKey,ct);
+        var result=new List<WifiMediaItem>();
+        using var reader=new StringReader(body);
+        while(true)
+        {
+            string? line=reader.ReadLine();if(line is null||line=="END")break;
+            var p=line.Split('\t');if(p.Length<5)continue;
+            if(long.TryParse(p[0],out var id)&&long.TryParse(p[2],out var size)&&long.TryParse(p[3],out var modified))result.Add(new(id,p[1],size,modified,p[4],p.Length>=6?p[5]:""));
+        }
         return result;
     }
 
@@ -70,8 +77,7 @@ public sealed class WifiCompanionClient(string host,int port,string pairingCode)
                 if(item.Size>0&&expected!=item.Size)throw new IOException("Filstorleken ändrades på telefonen.");
                 await using var output=new FileStream(partial,FileMode.CreateNew,FileAccess.Write,FileShare.None,1024*1024,true);
                 using var aes=new AesGcm(pair.SessionKey,16);
-                long written=0;
-                byte[] lenBytes=new byte[4];
+                long written=0;byte[] lenBytes=new byte[4];
                 while(written<expected)
                 {
                     await ReadExactlyAsync(stream,lenBytes,ct);
@@ -79,8 +85,7 @@ public sealed class WifiCompanionClient(string host,int port,string pairingCode)
                     if(plainLength<=0||plainLength>chunkSize||written+plainLength>expected)throw new IOException("Ogiltig krypterad blockstorlek.");
                     byte[] nonce=new byte[12];await ReadExactlyAsync(stream,nonce,ct);
                     byte[] encrypted=new byte[plainLength+16];await ReadExactlyAsync(stream,encrypted,ct);
-                    byte[] plain=new byte[plainLength];
-                    aes.Decrypt(nonce,encrypted.AsSpan(0,plainLength),encrypted.AsSpan(plainLength,16),plain);
+                    byte[] plain=new byte[plainLength];aes.Decrypt(nonce,encrypted.AsSpan(0,plainLength),encrypted.AsSpan(plainLength,16),plain);
                     await output.WriteAsync(plain,ct);written+=plainLength;
                 }
                 await output.FlushAsync(ct);
@@ -89,7 +94,24 @@ public sealed class WifiCompanionClient(string host,int port,string pairingCode)
         }catch{try{if(File.Exists(partial))File.Delete(partial);}catch{}throw;}
     }
 
-    public async Task<string> HashAsync(long id,CancellationToken ct){var pair=await ConnectAuthenticatedAsync($"HASH {id}",ct);using var client=pair.Client;using var stream=pair.Stream;string reply=(await ReadAsciiLineAsync(stream,ct)).Trim();if(reply.StartsWith("ERROR ",StringComparison.Ordinal))throw new IOException("Companion HASH-fel: "+reply);return reply;}
+    public async Task<string> HashAsync(long id,CancellationToken ct)
+    {
+        var pair=await ConnectAuthenticatedAsync($"HASH {id}",ct);using var client=pair.Client;using var stream=pair.Stream;
+        string reply=(await ReadEncryptedTextAsync(stream,pair.SessionKey,ct)).Trim();
+        return reply;
+    }
+
+    private static async Task<string> ReadEncryptedTextAsync(Stream stream,byte[] key,CancellationToken ct)
+    {
+        string header=await ReadAsciiLineAsync(stream,ct);
+        if(header.StartsWith("ERROR ",StringComparison.Ordinal))throw new IOException("Companion-fel: "+header);
+        var p=header.Split(' ',StringSplitOptions.RemoveEmptyEntries);
+        if(p.Length!=2||p[0]!="ETEXT"||!int.TryParse(p[1],out int plainLength)||plainLength<0||plainLength>16*1024*1024)throw new IOException("Ogiltigt krypterat textsvar: "+header);
+        byte[] nonce=new byte[12];await ReadExactlyAsync(stream,nonce,ct);
+        byte[] encrypted=new byte[plainLength+16];await ReadExactlyAsync(stream,encrypted,ct);
+        byte[] plain=new byte[plainLength];using var aes=new AesGcm(key,16);aes.Decrypt(nonce,encrypted.AsSpan(0,plainLength),encrypted.AsSpan(plainLength,16),plain);
+        return Encoding.UTF8.GetString(plain);
+    }
 
     private static async Task ReadExactlyAsync(Stream stream,Memory<byte> buffer,CancellationToken ct)
     {
