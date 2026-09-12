@@ -1,6 +1,4 @@
 using System.IO;
-using System.Net.Sockets;
-using System.Text;
 using System.Windows;
 
 namespace MobileMTPBackup;
@@ -14,16 +12,16 @@ public partial class MainWindow
         if(!int.TryParse(WifiPortTextBox.Text.Trim(),out int port)||port is <1 or >65535){MessageBox.Show("Ange en giltig port mellan 1 och 65535.","WI-FI TEST");return;}
         string pairing=WifiPairCodeTextBox.Text.Trim();
         if(pairing.Length!=6||pairing.Any(c=>!char.IsDigit(c))){MessageBox.Show("Ange den 6-siffriga parkoden som visas i Android Companion.","WI-FI TEST");return;}
-        WifiStatusText.Text="Testar Wi-Fi-anslutning och parkod...";
+        WifiStatusText.Text="Testar Wi-Fi med nonce/HMAC-autentisering...";
         try
         {
-            using var client=new TcpClient();using var cts=new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await client.ConnectAsync(host,port,cts.Token);
-            using var stream=client.GetStream();byte[] hello=Encoding.UTF8.GetBytes($"AUTH {pairing} HELLO\n");await stream.WriteAsync(hello,cts.Token);await stream.FlushAsync(cts.Token);
-            using var reader=new StreamReader(stream,Encoding.UTF8,false,1024,true);string? reply=await reader.ReadLineAsync(cts.Token);
+            using var cts=new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var client=new WifiCompanionClient(host,port,pairing);
+            string reply=await client.HelloAsync(cts.Token);
             if(reply=="ERROR unauthorized")throw new IOException("Fel parkod.");
-            if(reply is null||!reply.StartsWith("MOBILE_MTP_BACKUP_COMPANION/",StringComparison.Ordinal))throw new IOException("Fel tjänst svarade på porten.");
-            WifiStatusText.Text=$"Wi-Fi OK: {host}:{port} – Companion {reply.Split('/').Last()}, parkod godkänd.";Log($"WI-FI HANDSHAKE OK: {reply} från {host}:{port}; parkod godkänd.");
+            if(!reply.StartsWith("MOBILE_MTP_BACKUP_COMPANION/",StringComparison.Ordinal))throw new IOException("Fel tjänst svarade på porten.");
+            WifiStatusText.Text=$"Wi-Fi OK: {host}:{port} – Companion {reply.Split('/').Last()}, nonce/HMAC godkänd.";
+            Log($"WI-FI HANDSHAKE OK: {reply} från {host}:{port}; parkod verifierad utan att skickas i klartext.");
         }
         catch(Exception ex){WifiStatusText.Text="Ingen kompatibel Wi-Fi Companion svarar eller parkoden är fel.";Log("WI-FI TEST: "+ex.GetBaseException().Message);MessageBox.Show("Kunde inte verifiera Mobile MTP Backup Companion.\n\n"+ex.GetBaseException().Message,"WI-FI TEST",MessageBoxButton.OK,MessageBoxImage.Information);}
     }
