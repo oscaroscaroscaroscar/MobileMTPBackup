@@ -63,6 +63,7 @@ async Task RunServerAsync(TcpListener server, CancellationToken ct)
         try { socket = await server.AcceptTcpClientAsync(ct); }
         catch (OperationCanceledException) { break; }
         catch (ObjectDisposedException) { break; }
+        catch (SocketException) when (!server.Server.IsBound || ct.IsCancellationRequested) { break; }
         _ = Task.Run(() => HandleClientAsync(socket, ct), ct);
     }
 }
