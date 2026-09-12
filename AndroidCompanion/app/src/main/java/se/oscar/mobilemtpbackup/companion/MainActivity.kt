@@ -13,9 +13,12 @@ import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
+import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.security.SecureRandom
+import javax.crypto.Cipher
 import javax.crypto.Mac
+import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import kotlin.concurrent.thread
 
@@ -48,7 +51,7 @@ class MainActivity : AppCompatActivity() {
     private fun refreshStatus() = thread(name = "wifi-backup-status") {
         val ip = localIpv4() ?: "ingen lokal IPv4 hittades"; val permission = if (hasMediaPermission()) "godkänd" else "saknas"
         val count = try { if (hasMediaPermission()) queryMedia().size else 0 } catch (_: Exception) { -1 }; val countText = if (count >= 0) count.toString() else "okänt"
-        runOnUiThread { status.text = "Mobile MTP Backup Companion 0.7\n\nWi-Fi-tjänst aktiv\nIP-adress: $ip\nPort: 8765\nParkod: $pairingCode\nMediaåtkomst: $permission\nBilder/video synliga: $countText\n\nAnge IP-adressen och parkoden ovan i Windows-programmet.\nParkoden skickas inte längre i klartext: varje anslutning använder en ny nonce + HMAC-SHA256.\nLåt appen vara öppen under testet." }
+        runOnUiThread { status.text = "Mobile MTP Backup Companion 0.8\n\nWi-Fi-tjänst aktiv\nIP-adress: $ip\nPort: 8765\nParkod: $pairingCode\nMediaåtkomst: $permission\nBilder/video synliga: $countText\n\nAnge IP-adressen och parkoden ovan i Windows-programmet.\nAutentisering: unik nonce + HMAC-SHA256.\nFilinnehåll: AES-256-GCM-kryptering per block.\nMetadata/listning är fortfarande inte TLS-krypterad.\nLåt appen vara öppen under testet." }
     }
 
     private fun protocolField(value: String): String = value.replace('\t', ' ').replace('\r', ' ').replace('\n', ' ')
@@ -56,6 +59,27 @@ class MainActivity : AppCompatActivity() {
     private fun hex(bytes: ByteArray)=bytes.joinToString(""){"%02x".format(it)}
     private fun hmac(nonce:String,command:String):String { val mac=Mac.getInstance("HmacSHA256");mac.init(SecretKeySpec(pairingCode.toByteArray(Charsets.UTF_8),"HmacSHA256"));return hex(mac.doFinal((nonce+"\n"+command).toByteArray(Charsets.UTF_8))) }
     private fun secureEquals(a:String,b:String):Boolean = try { MessageDigest.isEqual(a.lowercase().toByteArray(Charsets.US_ASCII),b.lowercase().toByteArray(Charsets.US_ASCII)) } catch (_:Exception){false}
+    private fun sessionKey(nonce:String):ByteArray = MessageDigest.getInstance("SHA-256").digest("MobileMTPBackup-v5.24\n$pairingCode\n$nonce".toByteArray(Charsets.UTF_8))
+
+    private fun writeEncryptedMedia(input:InputStream,out:java.io.OutputStream,size:Long,key:ByteArray){
+        val chunkSize=1024*1024
+        out.write("EDATA $size $chunkSize\n".toByteArray());out.flush()
+        val buffer=ByteArray(chunkSize)
+        var remaining=size
+        while(remaining>0){
+            val wanted=minOf(chunkSize.toLong(),remaining).toInt()
+            var offset=0
+            while(offset<wanted){val n=input.read(buffer,offset,wanted-offset);if(n<=0)throw java.io.EOFException("media-short-read");offset+=n}
+            val iv=ByteArray(12).also{random.nextBytes(it)}
+            val cipher=Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE,SecretKeySpec(key,"AES"),GCMParameterSpec(128,iv))
+            val encrypted=cipher.doFinal(buffer,0,wanted)
+            out.write(ByteBuffer.allocate(4).putInt(wanted).array())
+            out.write(iv)
+            out.write(encrypted)
+            remaining-=wanted
+        }
+    }
 
     private fun startServer() = thread(name = "wifi-backup-server") {
         try {
@@ -69,9 +93,9 @@ class MainActivity : AppCompatActivity() {
                     val command=parts[2]; val expected=hmac(nonce,command); if(!secureEquals(parts[1],expected)){out.write("ERROR unauthorized\n".toByteArray());out.flush();continue}
                     if(command!="HELLO"&&!hasMediaPermission()){out.write("ERROR permission-required\n".toByteArray());out.flush();continue}
                     when {
-                        command=="HELLO" -> out.write("MOBILE_MTP_BACKUP_COMPANION/0.7\n".toByteArray())
+                        command=="HELLO" -> out.write("MOBILE_MTP_BACKUP_COMPANION/0.8\n".toByteArray())
                         command=="LIST" -> { queryMedia().forEach{item->out.write("${item.id}\t${protocolField(item.name)}\t${item.size}\t${item.modified}\t${protocolField(item.mime)}\t${protocolField(item.relativePath)}\n".toByteArray())};out.write("END\n".toByteArray()) }
-                        command.startsWith("GET ") -> { val id=command.removePrefix("GET ").toLongOrNull();val item=id?.let{queryMedia().firstOrNull{x->x.id==it}};if(item==null)out.write("ERROR not-found\n".toByteArray())else{val uri=android.content.ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"),item.id);contentResolver.openInputStream(uri)?.use{input->out.write("DATA ${item.size}\n".toByteArray());input.copyTo(out)}?:out.write("ERROR open-failed\n".toByteArray())} }
+                        command.startsWith("GET ") -> { val id=command.removePrefix("GET ").toLongOrNull();val item=id?.let{queryMedia().firstOrNull{x->x.id==it}};if(item==null)out.write("ERROR not-found\n".toByteArray())else{val uri=android.content.ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"),item.id);contentResolver.openInputStream(uri)?.use{input->writeEncryptedMedia(input,out,item.size,sessionKey(nonce))}?:out.write("ERROR open-failed\n".toByteArray())} }
                         command.startsWith("HASH ") -> { val id=command.removePrefix("HASH ").toLongOrNull();val item=id?.let{queryMedia().firstOrNull{x->x.id==it}};if(item==null)out.write("ERROR not-found\n".toByteArray())else{val uri=android.content.ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"),item.id);val md=MessageDigest.getInstance("SHA-256");contentResolver.openInputStream(uri)?.use{input->val buf=ByteArray(1024*1024);while(true){val n=input.read(buf);if(n<=0)break;md.update(buf,0,n)}};out.write((hex(md.digest())+"\n").toByteArray())} }
                         else -> out.write("ERROR unknown-command\n".toByteArray())
                     };out.flush()
