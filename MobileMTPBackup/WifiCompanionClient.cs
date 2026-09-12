@@ -28,7 +28,7 @@ public sealed class WifiCompanionClient(string host,int port,string pairingCode)
     }
 
     private byte[] DeriveSessionKey(string nonce)
-        => SHA256.HashData(Encoding.UTF8.GetBytes($"MobileMTPBackup-v5.24\n{pairingCode}\n{nonce}"));
+        => SHA256.HashData(Encoding.UTF8.GetBytes($"MobileMTPBackup-v5.25\n{pairingCode}\n{nonce}"));
 
     public async Task<string> HelloAsync(CancellationToken ct)
     {
