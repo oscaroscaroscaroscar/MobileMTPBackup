@@ -32,7 +32,7 @@ public partial class MainWindow
         if(_wifiCts is not null){MessageBox.Show("En Wi-Fi-backup kör redan.","WI-FI BACKUP");return;}
         string host=WifiHostTextBox.Text.Trim();
         if(string.IsNullOrWhiteSpace(host)||!int.TryParse(WifiPortTextBox.Text.Trim(),out int port)||port is <1 or >65535){MessageBox.Show("Kontrollera IP-adress och port.","WI-FI BACKUP");return;}
-        string pairing=WifiPairCodeTextBox.Text.Trim();if(pairing.Length!=6||pairing.Any(c=>!char.IsDigit(c))){MessageBox.Show("Ange den 6-siffriga parkoden från Android Companion.","WI-FI BACKUP");return;}
+        string pairing=WifiPairCodeTextBox.Text.Trim().ToLowerInvariant();if(pairing.Length!=16||pairing.Any(c=>!Uri.IsHexDigit(c))){MessageBox.Show("Ange den 16-teckens hexadecimala parnyckeln från Android Companion.","WI-FI BACKUP");return;}
         string root=DestinationTextBox.Text.Trim();if(string.IsNullOrWhiteSpace(root)){MessageBox.Show("Välj backupmapp.","WI-FI BACKUP");return;}
 
         DateTime startedAt=DateTime.Now;string? reportRoot=null;int copied=0,skipped=0,failed=0;long bytesCopied=0;
