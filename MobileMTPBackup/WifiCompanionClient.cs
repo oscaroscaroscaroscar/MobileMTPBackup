@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.IO;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -9,7 +10,7 @@ public sealed record WifiMediaItem(long Id,string Name,long Size,long ModifiedUn
 
 public sealed class WifiCompanionClient(string host,int port,string pairingCode)
 {
-    private async Task<(TcpClient Client,NetworkStream Stream)> ConnectAuthenticatedAsync(string command,CancellationToken ct)
+    private async Task<(TcpClient Client,NetworkStream Stream,byte[] SessionKey)> ConnectAuthenticatedAsync(string command,CancellationToken ct)
     {
         var client=new TcpClient();
         await client.ConnectAsync(host,port,ct);
@@ -23,8 +24,11 @@ public sealed class WifiCompanionClient(string host,int port,string pairingCode)
         string signature=Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
         byte[] request=Encoding.UTF8.GetBytes($"AUTH {signature} {command}\n");
         await stream.WriteAsync(request,ct);await stream.FlushAsync(ct);
-        return (client,stream);
+        return (client,stream,DeriveSessionKey(nonce));
     }
+
+    private byte[] DeriveSessionKey(string nonce)
+        => SHA256.HashData(Encoding.UTF8.GetBytes($"MobileMTPBackup-v5.24\n{pairingCode}\n{nonce}"));
 
     public async Task<string> HelloAsync(CancellationToken ct)
     {
@@ -54,12 +58,43 @@ public sealed class WifiCompanionClient(string host,int port,string pairingCode)
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);string partial=destination+".partial";
         try{
             try{if(File.Exists(partial))File.Delete(partial);}catch{}
-            var pair=await ConnectAuthenticatedAsync($"GET {item.Id}",ct);using(var client=pair.Client)using(var stream=pair.Stream){string header=await ReadAsciiLineAsync(stream,ct);if(header.StartsWith("ERROR ",StringComparison.Ordinal))throw new IOException("Companion GET-fel: "+header);if(!header.StartsWith("DATA ",StringComparison.Ordinal)||!long.TryParse(header[5..],out long expected))throw new IOException("Ogiltigt GET-svar: "+header);if(expected<0)throw new IOException("Ogiltig filstorlek från telefonen.");if(item.Size>0&&expected!=item.Size)throw new IOException("Filstorleken ändrades på telefonen.");await using var output=new FileStream(partial,FileMode.CreateNew,FileAccess.Write,FileShare.None,1024*1024,true);byte[] buffer=new byte[1024*1024];long remaining=expected;while(remaining>0){int n=await stream.ReadAsync(buffer.AsMemory(0,(int)Math.Min(buffer.Length,remaining)),ct);if(n<=0)throw new EndOfStreamException("Wi-Fi-överföringen avbröts.");await output.WriteAsync(buffer.AsMemory(0,n),ct);remaining-=n;}await output.FlushAsync(ct);}
+            var pair=await ConnectAuthenticatedAsync($"GET {item.Id}",ct);
+            using(var client=pair.Client)
+            using(var stream=pair.Stream)
+            {
+                string header=await ReadAsciiLineAsync(stream,ct);
+                if(header.StartsWith("ERROR ",StringComparison.Ordinal))throw new IOException("Companion GET-fel: "+header);
+                var hp=header.Split(' ',StringSplitOptions.RemoveEmptyEntries);
+                if(hp.Length!=3||hp[0]!="EDATA"||!long.TryParse(hp[1],out long expected)||!int.TryParse(hp[2],out int chunkSize))throw new IOException("Ogiltigt krypterat GET-svar: "+header);
+                if(expected<0||chunkSize<16||chunkSize>4*1024*1024)throw new IOException("Ogiltiga krypteringsparametrar från telefonen.");
+                if(item.Size>0&&expected!=item.Size)throw new IOException("Filstorleken ändrades på telefonen.");
+                await using var output=new FileStream(partial,FileMode.CreateNew,FileAccess.Write,FileShare.None,1024*1024,true);
+                using var aes=new AesGcm(pair.SessionKey,16);
+                long written=0;
+                byte[] lenBytes=new byte[4];
+                while(written<expected)
+                {
+                    await ReadExactlyAsync(stream,lenBytes,ct);
+                    int plainLength=BinaryPrimitives.ReadInt32BigEndian(lenBytes);
+                    if(plainLength<=0||plainLength>chunkSize||written+plainLength>expected)throw new IOException("Ogiltig krypterad blockstorlek.");
+                    byte[] nonce=new byte[12];await ReadExactlyAsync(stream,nonce,ct);
+                    byte[] encrypted=new byte[plainLength+16];await ReadExactlyAsync(stream,encrypted,ct);
+                    byte[] plain=new byte[plainLength];
+                    aes.Decrypt(nonce,encrypted.AsSpan(0,plainLength),encrypted.AsSpan(plainLength,16),plain);
+                    await output.WriteAsync(plain,ct);written+=plainLength;
+                }
+                await output.FlushAsync(ct);
+            }
             long actual=new FileInfo(partial).Length;if(item.Size>0&&actual!=item.Size)throw new IOException($"Nedladdad filstorlek stämmer inte: {actual} != {item.Size}.");string remoteHash=await HashAsync(item.Id,ct);if(remoteHash.Length!=64||remoteHash.Any(c=>!Uri.IsHexDigit(c)))throw new IOException("Ogiltigt SHA-256-svar från telefonen.");await using var input=File.OpenRead(partial);string localHash=Convert.ToHexString(await SHA256.HashDataAsync(input,ct)).ToLowerInvariant();if(!string.Equals(remoteHash,localHash,StringComparison.OrdinalIgnoreCase))throw new IOException("SHA-256 stämmer inte.");if(File.Exists(destination))throw new IOException("Målfilen finns redan men matchar inte källan: "+destination);File.Move(partial,destination);if(item.ModifiedUnix>0){var dt=DateTimeOffset.FromUnixTimeSeconds(item.ModifiedUnix).LocalDateTime;try{File.SetLastWriteTime(destination,dt);}catch{}}
         }catch{try{if(File.Exists(partial))File.Delete(partial);}catch{}throw;}
     }
 
     public async Task<string> HashAsync(long id,CancellationToken ct){var pair=await ConnectAuthenticatedAsync($"HASH {id}",ct);using var client=pair.Client;using var stream=pair.Stream;string reply=(await ReadAsciiLineAsync(stream,ct)).Trim();if(reply.StartsWith("ERROR ",StringComparison.Ordinal))throw new IOException("Companion HASH-fel: "+reply);return reply;}
+
+    private static async Task ReadExactlyAsync(Stream stream,Memory<byte> buffer,CancellationToken ct)
+    {
+        int offset=0;while(offset<buffer.Length){int n=await stream.ReadAsync(buffer[offset..],ct);if(n<=0)throw new EndOfStreamException("Wi-Fi-överföringen avbröts mitt i ett krypterat block.");offset+=n;}
+    }
 
     private static async Task<string> ReadAsciiLineAsync(Stream stream,CancellationToken ct){var bytes=new List<byte>(128);var one=new byte[1];while(true){int n=await stream.ReadAsync(one,ct);if(n==0)break;if(one[0]==10)break;if(one[0]!=13)bytes.Add(one[0]);if(bytes.Count>4096)throw new IOException("För långt protokollhuvud.");}return Encoding.UTF8.GetString(bytes.ToArray());}
 }
