@@ -8,9 +8,9 @@ import android.provider.MediaStore
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
-import java.io.BufferedReader
-import java.io.InputStreamReader
+import java.io.InputStream
 import java.net.Inet4Address
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.security.MessageDigest
@@ -73,10 +73,10 @@ class MainActivity : AppCompatActivity() {
     private fun refreshStatus() = thread(name = "wifi-backup-status") {
         val ip = localIpv4() ?: "ingen lokal IPv4 hittades"
         val permission = if (hasMediaPermission()) "godkänd" else "saknas"
-        val count = try { queryMedia().size } catch (_: Exception) { -1 }
+        val count = try { if (hasMediaPermission()) queryMedia().size else 0 } catch (_: Exception) { -1 }
         val countText = if (count >= 0) count.toString() else "okänt"
         runOnUiThread {
-            status.text = "Mobile MTP Backup Companion 0.5\n\n" +
+            status.text = "Mobile MTP Backup Companion 0.6\n\n" +
                 "Wi-Fi-tjänst aktiv\n" +
                 "IP-adress: $ip\n" +
                 "Port: 8765\n" +
@@ -91,16 +91,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun protocolField(value: String): String = value.replace('\t', ' ').replace('\r', ' ').replace('\n', ' ')
 
+    private fun readCommandLine(input: InputStream, maxBytes: Int = 256): String {
+        val bytes = ArrayList<Byte>(64)
+        while (bytes.size <= maxBytes) {
+            val value = input.read()
+            if (value < 0 || value == '\n'.code) break
+            if (value != '\r'.code) bytes.add(value.toByte())
+        }
+        if (bytes.size > maxBytes) throw IllegalArgumentException("command-too-long")
+        return bytes.toByteArray().toString(Charsets.UTF_8).trim()
+    }
+
     private fun startServer() = thread(name = "wifi-backup-server") {
         try {
-            server = ServerSocket(8765)
+            server = ServerSocket().apply {
+                reuseAddress = true
+                bind(InetSocketAddress(8765))
+            }
             refreshStatus()
             while (!Thread.currentThread().isInterrupted) {
                 val socket = server!!.accept()
                 try {
-                    val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
-                    val raw = reader.readLine()?.trim().orEmpty()
+                    socket.soTimeout = 15_000
                     val out = socket.getOutputStream()
+                    val raw = try { readCommandLine(socket.getInputStream()) }
+                    catch (_: IllegalArgumentException) {
+                        out.write("ERROR command-too-long\n".toByteArray())
+                        out.flush()
+                        continue
+                    }
                     val prefix = "AUTH $pairingCode "
                     if (!raw.startsWith(prefix)) {
                         out.write("ERROR unauthorized\n".toByteArray())
@@ -108,8 +127,13 @@ class MainActivity : AppCompatActivity() {
                         continue
                     }
                     val command = raw.removePrefix(prefix)
+                    if (command != "HELLO" && !hasMediaPermission()) {
+                        out.write("ERROR permission-required\n".toByteArray())
+                        out.flush()
+                        continue
+                    }
                     when {
-                        command == "HELLO" -> out.write("MOBILE_MTP_BACKUP_COMPANION/0.5\n".toByteArray())
+                        command == "HELLO" -> out.write("MOBILE_MTP_BACKUP_COMPANION/0.6\n".toByteArray())
                         command == "LIST" -> {
                             queryMedia().forEach { item ->
                                 out.write("${item.id}\t${protocolField(item.name)}\t${item.size}\t${item.modified}\t${protocolField(item.mime)}\t${protocolField(item.relativePath)}\n".toByteArray())
@@ -152,7 +176,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         } catch (ex: Exception) {
-            runOnUiThread { status.text = "Wi-Fi-tjänsten stoppades:\n${ex.message}" }
+            if (!isFinishing && !isDestroyed) runOnUiThread { status.text = "Wi-Fi-tjänsten stoppades:\n${ex.message}" }
         }
     }
 
