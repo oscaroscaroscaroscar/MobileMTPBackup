@@ -27,6 +27,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private val random = SecureRandom()
     private val pairingCode: String = ByteArray(8).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it) }
+    private val protocolVersion = "MobileMTPBackup-v5.27"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,7 +52,7 @@ class MainActivity : AppCompatActivity() {
     private fun refreshStatus() = thread(name = "wifi-backup-status") {
         val ip = localIpv4() ?: "ingen lokal IPv4 hittades"; val permission = if (hasMediaPermission()) "godkänd" else "saknas"
         val count = try { if (hasMediaPermission()) queryMedia().size else 0 } catch (_: Exception) { -1 }; val countText = if (count >= 0) count.toString() else "okänt"
-        runOnUiThread { status.text = "Mobile MTP Backup Companion 0.10\n\nWi-Fi-tjänst aktiv\nIP-adress: $ip\nPort: 8765\nParnyckel: $pairingCode\nMediaåtkomst: $permission\nBilder/video synliga: $countText\n\nAnge IP-adressen och den 16-teckens hexadecimala parnyckeln ovan i Windows-programmet.\nParnyckeln har 64 bitars slumpmässig entropi och gäller bara tills appen stängs.\nAutentisering: unik nonce + HMAC-SHA256.\nFilinnehåll, LIST-metadata och HASH-svar: AES-256-GCM.\nHELLO/nonce och generiska felramar är fortfarande inte TLS-krypterade.\nLåt appen vara öppen under testet." }
+        runOnUiThread { status.text = "Mobile MTP Backup Companion 0.11\n\nWi-Fi-tjänst aktiv\nIP-adress: $ip\nPort: 8765\nParnyckel: $pairingCode\nMediaåtkomst: $permission\nBilder/video synliga: $countText\n\nAnge IP-adressen och den 16-teckens hexadecimala parnyckeln ovan i Windows-programmet.\nParnyckeln har 64 bitars slumpmässig entropi och gäller bara tills appen stängs.\nAutentisering: unik nonce + HMAC-SHA256.\nSessionsnyckel: HMAC-SHA256-baserad härledning.\nHELLO, LIST, HASH och filinnehåll: AES-256-GCM med autentiserad protokollkontext.\nNonce-ramen och fel före godkänd autentisering ligger fortfarande utanför TLS.\nLåt appen vara öppen under testet." }
     }
 
     private fun protocolField(value: String): String = value.replace('\t', ' ').replace('\r', ' ').replace('\n', ' ')
@@ -59,38 +60,51 @@ class MainActivity : AppCompatActivity() {
     private fun hex(bytes: ByteArray)=bytes.joinToString(""){"%02x".format(it)}
     private fun hmac(nonce:String,command:String):String { val mac=Mac.getInstance("HmacSHA256");mac.init(SecretKeySpec(pairingCode.toByteArray(Charsets.UTF_8),"HmacSHA256"));return hex(mac.doFinal((nonce+"\n"+command).toByteArray(Charsets.UTF_8))) }
     private fun secureEquals(a:String,b:String):Boolean = try { MessageDigest.isEqual(a.lowercase().toByteArray(Charsets.US_ASCII),b.lowercase().toByteArray(Charsets.US_ASCII)) } catch (_:Exception){false}
-    private fun sessionKey(nonce:String):ByteArray = MessageDigest.getInstance("SHA-256").digest("MobileMTPBackup-v5.26\n$pairingCode\n$nonce".toByteArray(Charsets.UTF_8))
 
-    private fun encryptBytes(plain:ByteArray,key:ByteArray):Pair<ByteArray,ByteArray>{
+    private fun sessionKey(nonce:String):ByteArray {
+        val mac=Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(pairingCode.toByteArray(Charsets.UTF_8),"HmacSHA256"))
+        return mac.doFinal(("$protocolVersion\nsession\n$nonce").toByteArray(Charsets.UTF_8))
+    }
+
+    private fun textAad(context:String,header:String):ByteArray = "$protocolVersion\ntext\n$context\n$header".toByteArray(Charsets.UTF_8)
+    private fun mediaAad(context:String,header:String,chunkIndex:Long,plainLength:Int):ByteArray = "$protocolVersion\nmedia\n$context\n$header\n$chunkIndex\n$plainLength".toByteArray(Charsets.UTF_8)
+
+    private fun encryptBytes(plain:ByteArray,key:ByteArray,aad:ByteArray):Pair<ByteArray,ByteArray>{
         val iv=ByteArray(12).also{random.nextBytes(it)}
         val cipher=Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE,SecretKeySpec(key,"AES"),GCMParameterSpec(128,iv))
+        cipher.updateAAD(aad)
         return iv to cipher.doFinal(plain)
     }
 
-    private fun writeEncryptedText(out:java.io.OutputStream,text:String,key:ByteArray){
+    private fun writeEncryptedText(out:java.io.OutputStream,text:String,key:ByteArray,context:String){
         val plain=text.toByteArray(Charsets.UTF_8)
         require(plain.size<=16*1024*1024){"encrypted-text-too-large"}
-        val (iv,encrypted)=encryptBytes(plain,key)
-        out.write("ETEXT ${plain.size}\n".toByteArray())
+        val header="ETEXT ${plain.size}"
+        val (iv,encrypted)=encryptBytes(plain,key,textAad(context,header))
+        out.write((header+"\n").toByteArray())
         out.write(iv)
         out.write(encrypted)
     }
 
-    private fun writeEncryptedMedia(input:InputStream,out:java.io.OutputStream,size:Long,key:ByteArray){
+    private fun writeEncryptedMedia(input:InputStream,out:java.io.OutputStream,size:Long,key:ByteArray,context:String){
         val chunkSize=1024*1024
-        out.write("EDATA $size $chunkSize\n".toByteArray());out.flush()
+        val header="EDATA $size $chunkSize"
+        out.write((header+"\n").toByteArray());out.flush()
         val buffer=ByteArray(chunkSize)
         var remaining=size
+        var chunkIndex=0L
         while(remaining>0){
             val wanted=minOf(chunkSize.toLong(),remaining).toInt()
             var offset=0
             while(offset<wanted){val n=input.read(buffer,offset,wanted-offset);if(n<=0)throw java.io.EOFException("media-short-read");offset+=n}
-            val (iv,encrypted)=encryptBytes(buffer.copyOfRange(0,wanted),key)
+            val (iv,encrypted)=encryptBytes(buffer.copyOfRange(0,wanted),key,mediaAad(context,header,chunkIndex,wanted))
             out.write(ByteBuffer.allocate(4).putInt(wanted).array())
             out.write(iv)
             out.write(encrypted)
             remaining-=wanted
+            chunkIndex++
         }
     }
 
@@ -104,20 +118,37 @@ class MainActivity : AppCompatActivity() {
                     val raw=try{readCommandLine(socket.getInputStream())}catch(_:IllegalArgumentException){out.write("ERROR command-too-long\n".toByteArray());out.flush();continue}
                     val parts=raw.split(' ',limit=3); if(parts.size<3||parts[0]!="AUTH"||parts[1].length!=64){out.write("ERROR unauthorized\n".toByteArray());out.flush();continue}
                     val command=parts[2]; val expected=hmac(nonce,command); if(!secureEquals(parts[1],expected)){out.write("ERROR unauthorized\n".toByteArray());out.flush();continue}
-                    if(command!="HELLO"&&!hasMediaPermission()){out.write("ERROR permission-required\n".toByteArray());out.flush();continue}
                     val key=sessionKey(nonce)
+                    if(command!="HELLO"&&!hasMediaPermission()){writeEncryptedText(out,"ERROR permission-required\n",key,command);out.flush();continue}
                     when {
-                        command=="HELLO" -> out.write("MOBILE_MTP_BACKUP_COMPANION/0.10\n".toByteArray())
+                        command=="HELLO" -> writeEncryptedText(out,"MOBILE_MTP_BACKUP_COMPANION/0.11\n",key,command)
                         command=="LIST" -> {
                             val body=buildString {
                                 queryMedia().forEach{item->append("${item.id}\t${protocolField(item.name)}\t${item.size}\t${item.modified}\t${protocolField(item.mime)}\t${protocolField(item.relativePath)}\n")}
                                 append("END\n")
                             }
-                            writeEncryptedText(out,body,key)
+                            writeEncryptedText(out,body,key,command)
                         }
-                        command.startsWith("GET ") -> { val id=command.removePrefix("GET ").toLongOrNull();val item=id?.let{queryMedia().firstOrNull{x->x.id==it}};if(item==null)out.write("ERROR not-found\n".toByteArray())else{val uri=android.content.ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"),item.id);contentResolver.openInputStream(uri)?.use{input->writeEncryptedMedia(input,out,item.size,key)}?:out.write("ERROR open-failed\n".toByteArray())} }
-                        command.startsWith("HASH ") -> { val id=command.removePrefix("HASH ").toLongOrNull();val item=id?.let{queryMedia().firstOrNull{x->x.id==it}};if(item==null)out.write("ERROR not-found\n".toByteArray())else{val uri=android.content.ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"),item.id);val md=MessageDigest.getInstance("SHA-256");contentResolver.openInputStream(uri)?.use{input->val buf=ByteArray(1024*1024);while(true){val n=input.read(buf);if(n<=0)break;md.update(buf,0,n)}};writeEncryptedText(out,hex(md.digest())+"\n",key)} }
-                        else -> out.write("ERROR unknown-command\n".toByteArray())
+                        command.startsWith("GET ") -> {
+                            val id=command.removePrefix("GET ").toLongOrNull();val item=id?.let{queryMedia().firstOrNull{x->x.id==it}}
+                            if(item==null)writeEncryptedText(out,"ERROR not-found\n",key,command)
+                            else{
+                                val uri=android.content.ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"),item.id)
+                                contentResolver.openInputStream(uri)?.use{input->writeEncryptedMedia(input,out,item.size,key,command)}?:writeEncryptedText(out,"ERROR open-failed\n",key,command)
+                            }
+                        }
+                        command.startsWith("HASH ") -> {
+                            val id=command.removePrefix("HASH ").toLongOrNull();val item=id?.let{queryMedia().firstOrNull{x->x.id==it}}
+                            if(item==null)writeEncryptedText(out,"ERROR not-found\n",key,command)
+                            else{
+                                val uri=android.content.ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"),item.id)
+                                val md=MessageDigest.getInstance("SHA-256")
+                                val opened=contentResolver.openInputStream(uri)
+                                if(opened==null)writeEncryptedText(out,"ERROR open-failed\n",key,command)
+                                else opened.use{input->val buf=ByteArray(1024*1024);while(true){val n=input.read(buf);if(n<=0)break;md.update(buf,0,n)};writeEncryptedText(out,hex(md.digest())+"\n",key,command)}
+                            }
+                        }
+                        else -> writeEncryptedText(out,"ERROR unknown-command\n",key,command)
                     };out.flush()
                 } finally { socket.close() }
             }
