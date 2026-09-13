@@ -33,7 +33,7 @@ jobs:
           Write-Host "EXE size: $size bytes"
       - uses: actions/upload-artifact@v4
         with:
-          name: MobileMTPBackup-v5.33-Windows-x64
+          name: MobileMTPBackup-v5.34-Windows-x64
           path: publish/win-x64/
       - name: Build cumulative master package
         shell: pwsh
@@ -45,17 +45,15 @@ jobs:
           git log --date=iso --pretty=format:'%H %ad %s' | Out-File -Encoding utf8 master\HISTORY\COMMIT_HISTORY.txt
           @"
           Mobile MTP Backup MASTER package
-          Version: 5.33
+          Version: 5.34
           Android Companion source: 0.12.0
           Google Drive target: detects a mounted Google Drive for desktop root/My Drive/Min enhet, creates/uses MobileMTPBackup, then performs a temporary write/read test before accepting the target. The probe file is deleted immediately. Existing .partial finalization and SHA-256 verification remain in the real backup path; Google Drive for desktop performs cloud synchronization.
           Direct Google Drive API upload is not enabled and would require OAuth/client authorization.
-          Companion 0.12 robustness: each accepted client is isolated so timeout, broken socket, malformed input or transfer failure should not terminate the main server accept loop. The latest client error is shown in the Android UI.
-          Companion 0.12 MediaStore optimization: GET and HASH query the requested MediaStore ID directly rather than scanning the full media library each time.
-          Companion 0.12 permissions: Android 13+ image and video permissions are tracked independently; LIST/GET/HASH expose only granted media categories.
+          Companion 0.12 robustness: each accepted client is isolated so timeout, broken socket, malformed input or transfer failure should not terminate the main server accept loop. GET and HASH use direct MediaStore ID lookup. Android 13+ image/video permissions are tracked independently.
           Wi-Fi pairing: 64-bit random hexadecimal secret, regenerated when the Android app starts.
           Wi-Fi authentication: per-connection nonce + HMAC-SHA256; pairing secret is not sent in cleartext.
           Wi-Fi protected payloads: HELLO, LIST metadata, HASH replies and media file chunks use AES-256-GCM.
-          CI protocol self-test: validates HELLO, LIST, GET, HASH, AES-GCM AAD, SHA-256 verification, .partial finalization and incremental skip logic before publication.
+          v5.34 CI protocol self-test: first injects a deliberately corrupted AES-GCM HELLO response and requires the Windows client to reject it, then verifies that a fresh connection recovers successfully against Companion 0.12 semantics. It then validates LIST, GET, HASH, AAD, SHA-256 verification, .partial finalization and incremental skip logic before publication.
           v5.30 diagnostics remain: TESTA WI-FI writes a sanitized timestamped report under backup destination/_diagnostics on success or failure. Pairing secret is explicitly not included.
           The initial nonce frame and errors before successful authentication are not TLS encrypted.
           Commit: $env:GITHUB_SHA
