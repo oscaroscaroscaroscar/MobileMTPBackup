@@ -33,7 +33,7 @@ jobs:
           Write-Host "EXE size: $size bytes"
       - uses: actions/upload-artifact@v4
         with:
-          name: MobileMTPBackup-v5.34-Windows-x64
+          name: MobileMTPBackup-v5.35-Windows-x64
           path: publish/win-x64/
       - name: Build cumulative master package
         shell: pwsh
@@ -45,7 +45,7 @@ jobs:
           git log --date=iso --pretty=format:'%H %ad %s' | Out-File -Encoding utf8 master\HISTORY\COMMIT_HISTORY.txt
           @"
           Mobile MTP Backup MASTER package
-          Version: 5.34
+          Version: 5.35
           Android Companion source: 0.12.0
           Google Drive target: detects a mounted Google Drive for desktop root/My Drive/Min enhet, creates/uses MobileMTPBackup, then performs a temporary write/read test before accepting the target. The probe file is deleted immediately. Existing .partial finalization and SHA-256 verification remain in the real backup path; Google Drive for desktop performs cloud synchronization.
           Direct Google Drive API upload is not enabled and would require OAuth/client authorization.
@@ -53,8 +53,9 @@ jobs:
           Wi-Fi pairing: 64-bit random hexadecimal secret, regenerated when the Android app starts.
           Wi-Fi authentication: per-connection nonce + HMAC-SHA256; pairing secret is not sent in cleartext.
           Wi-Fi protected payloads: HELLO, LIST metadata, HASH replies and media file chunks use AES-256-GCM.
-          v5.34 CI protocol self-test: first injects a deliberately corrupted AES-GCM HELLO response and requires the Windows client to reject it, then verifies that a fresh connection recovers successfully against Companion 0.12 semantics. It then validates LIST, GET, HASH, AAD, SHA-256 verification, .partial finalization and incremental skip logic before publication.
-          v5.30 diagnostics remain: TESTA WI-FI writes a sanitized timestamped report under backup destination/_diagnostics on success or failure. Pairing secret is explicitly not included.
+          v5.34 CI protocol self-test remains: deliberately corrupted AES-GCM HELLO response must be rejected, followed by successful fresh-connection recovery against Companion 0.12 semantics; LIST, GET, HASH, AAD, SHA-256, .partial finalization and incremental skip logic are then verified.
+          v5.35 diagnostics: old hardcoded Windows v5.30 / Companion 0.11 advice was removed. Runtime diagnostics now report the actual Windows assembly version, recommend Companion 0.12 centrally, record the recommended companion version in the sanitized report, and warn when a different companion version answers successfully.
+          TESTA WI-FI writes a sanitized timestamped report under backup destination/_diagnostics on success or failure. Pairing secret is explicitly not included.
           The initial nonce frame and errors before successful authentication are not TLS encrypted.
           Commit: $env:GITHUB_SHA
           Built: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')
