@@ -7,9 +7,10 @@ using MobileMTPBackup;
 
 const string ProtocolVersion = "MobileMTPBackup-v5.27";
 const string PairingCode = "0011223344556677";
-byte[] MediaBytes = Encoding.UTF8.GetBytes("Mobile MTP Backup protocol self-test payload v5.28\n");
+byte[] MediaBytes = Encoding.UTF8.GetBytes("Mobile MTP Backup protocol self-test payload v5.34\n");
 long MediaId = 42;
 long ModifiedUnix = 1_700_000_000;
+int helloCount = 0;
 
 using var listener = new TcpListener(IPAddress.Loopback, 0);
 listener.Start();
@@ -20,8 +21,19 @@ var serverTask = RunServerAsync(listener, serverCts.Token);
 var client = new WifiCompanionClient("127.0.0.1", port, PairingCode);
 using var clientCts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
 
+bool corruptRejected = false;
+try
+{
+    _ = await client.HelloAsync(clientCts.Token);
+}
+catch (CryptographicException)
+{
+    corruptRejected = true;
+}
+Assert(corruptRejected, "Manipulerat AES-GCM-svar borde avvisas");
+
 string hello = await client.HelloAsync(clientCts.Token);
-Assert(hello == "MOBILE_MTP_BACKUP_COMPANION/0.11", "HELLO svar fel");
+Assert(hello == "MOBILE_MTP_BACKUP_COMPANION/0.12", "HELLO svar fel efter återhämtning");
 
 var list = await client.ListAsync(clientCts.Token);
 Assert(list.Count == 1, "LIST antal fel");
@@ -52,7 +64,7 @@ finally
 
 listener.Stop();
 await serverTask;
-Console.WriteLine("PROTOCOL SELF-TEST PASSED: HELLO, LIST, GET, HASH, AES-256-GCM AAD, SHA-256 och inkrementell kontroll.");
+Console.WriteLine("PROTOCOL SELF-TEST PASSED: corrupted AES-GCM rejection + recovery, HELLO 0.12, LIST, GET, HASH, AAD, SHA-256 och inkrementell kontroll.");
 return;
 
 async Task RunServerAsync(TcpListener server, CancellationToken ct)
@@ -86,7 +98,10 @@ async Task HandleClientAsync(TcpClient socket, CancellationToken ct)
         byte[] sessionKey = DeriveSessionKey(nonce);
         if (command == "HELLO")
         {
-            await WriteEncryptedTextAsync(stream, sessionKey, command, "MOBILE_MTP_BACKUP_COMPANION/0.11\n", ct);
+            if (Interlocked.Increment(ref helloCount) == 1)
+                await WriteCorruptEncryptedTextAsync(stream, sessionKey, command, "MOBILE_MTP_BACKUP_COMPANION/0.12\n", ct);
+            else
+                await WriteEncryptedTextAsync(stream, sessionKey, command, "MOBILE_MTP_BACKUP_COMPANION/0.12\n", ct);
         }
         else if (command == "LIST")
         {
@@ -134,6 +149,23 @@ async Task WriteEncryptedTextAsync(Stream stream, byte[] key, string context, st
     byte[] tag = new byte[16];
     using var aes = new AesGcm(key, 16);
     aes.Encrypt(nonce, plain, cipher, tag, TextAad(context, header));
+    await stream.WriteAsync(nonce, ct);
+    await stream.WriteAsync(cipher, ct);
+    await stream.WriteAsync(tag, ct);
+    await stream.FlushAsync(ct);
+}
+
+async Task WriteCorruptEncryptedTextAsync(Stream stream, byte[] key, string context, string text, CancellationToken ct)
+{
+    byte[] plain = Encoding.UTF8.GetBytes(text);
+    string header = $"ETEXT {plain.Length}";
+    await WriteLineAsync(stream, header, ct);
+    byte[] nonce = RandomNumberGenerator.GetBytes(12);
+    byte[] cipher = new byte[plain.Length];
+    byte[] tag = new byte[16];
+    using var aes = new AesGcm(key, 16);
+    aes.Encrypt(nonce, plain, cipher, tag, TextAad(context, header));
+    tag[^1] ^= 0x01;
     await stream.WriteAsync(nonce, ct);
     await stream.WriteAsync(cipher, ct);
     await stream.WriteAsync(tag, ct);
