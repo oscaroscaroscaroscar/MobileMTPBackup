@@ -6,6 +6,8 @@ namespace MobileMTPBackup;
 
 public partial class MainWindow
 {
+    private const string RecommendedCompanionVersion = "0.12";
+
     private async void TestWifi_Click(object sender, RoutedEventArgs e)
     {
         string host=WifiHostTextBox.Text.Trim();
@@ -20,9 +22,14 @@ public partial class MainWindow
             var client=new WifiCompanionClient(host,port,pairing);
             string reply=await client.HelloAsync(cts.Token);
             if(!reply.StartsWith("MOBILE_MTP_BACKUP_COMPANION/",StringComparison.Ordinal))throw new IOException("Fel tjänst svarade på porten.");
-            WifiStatusText.Text=$"Wi-Fi OK: {host}:{port} – Companion {reply.Split('/').Last()}, nonce/HMAC godkänd. HELLO, LIST, HASH och media använder AES-256-GCM med autentiserad protokollkontext.";
-            Log($"WI-FI HANDSHAKE OK: {reply} från {host}:{port}; parnyckeln skickades inte i klartext. v5.30 sparar även en sanerad diagnostikrapport.");
-            string? report=TryWriteWifiDiagnosticReport(host,port,true,reply,"Anslutningen är verifierad. Nästa steg är WI-FI BACKUP MEDIA.");
+            string companionVersion=reply.Split('/').Last();
+            string appVersion=GetCurrentAppVersion();
+            WifiStatusText.Text=$"Wi-Fi OK: {host}:{port} – Companion {companionVersion}, nonce/HMAC godkänd. HELLO, LIST, HASH och media använder AES-256-GCM med autentiserad protokollkontext.";
+            Log($"WI-FI HANDSHAKE OK: {reply} från {host}:{port}; parnyckeln skickades inte i klartext. Windows {appVersion} sparar en sanerad diagnostikrapport.");
+            string recommendation=companionVersion==RecommendedCompanionVersion
+                ? "Anslutningen är verifierad. Nästa steg är WI-FI BACKUP MEDIA."
+                : $"Anslutningen fungerar, men rekommenderad Companion-version för denna build är {RecommendedCompanionVersion}. Aktuell telefonversion: {companionVersion}.";
+            string? report=TryWriteWifiDiagnosticReport(host,port,true,reply,recommendation);
             if(report is not null)Log("WI-FI DIAGNOSTIK SPARAD: "+report);
         }
         catch(Exception ex)
@@ -35,6 +42,12 @@ public partial class MainWindow
             if(report is not null)Log("WI-FI DIAGNOSTIK SPARAD: "+report);
             MessageBox.Show($"Kunde inte verifiera Mobile MTP Backup Companion.\n\n{root}\n\nFörslag:\n{help}"+(report is null?"":$"\n\nDiagnostikrapport:\n{report}"),"WI-FI TEST",MessageBoxButton.OK,MessageBoxImage.Information);
         }
+    }
+
+    private static string GetCurrentAppVersion()
+    {
+        Version? version=typeof(MainWindow).Assembly.GetName().Version;
+        return version is null ? "unknown" : $"v{version.Major}.{version.Minor}";
     }
 
     private string? TryWriteWifiDiagnosticReport(string host,int port,bool success,string detail,string recommendation)
@@ -50,6 +63,7 @@ public partial class MainWindow
             string text=$"Mobile MTP Backup Wi-Fi diagnostic\n"+
                         $"Generated: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}\n"+
                         $"App version: {version}\n"+
+                        $"Recommended Companion: {RecommendedCompanionVersion}\n"+
                         $"OS: {Environment.OSVersion}\n"+
                         $"Target host: {host}\n"+
                         $"Target port: {port}\n"+
@@ -84,10 +98,10 @@ public partial class MainWindow
         if(message.Contains("unauthorized") || message.Contains("hmac") || message.Contains("authentication") || message.Contains("autent"))
             return "Anslutningen nådde Companion men autentiseringen misslyckades. Skriv in exakt den aktuella 16-teckens parnyckeln som visas i Android Companion; nyckeln ändras när appen startas om.";
         if(message.Contains("decrypt") || message.Contains("gcm") || message.Contains("tag"))
-            return "Krypteringskontrollen misslyckades. Kontrollera att Windows v5.30 används tillsammans med Android Companion 0.11 och prova en ny parnyckel genom att starta om Companion.";
+            return $"Krypteringskontrollen misslyckades. Använd aktuell Windows-build tillsammans med Android Companion {RecommendedCompanionVersion} och prova en ny parnyckel genom att starta om Companion.";
         if(message.Contains("fel tjänst") || message.Contains("protocol") || message.Contains("protokoll"))
-            return "Något annat än rätt Companion/protokoll svarade. Kontrollera telefonens IP, port 8765 och att Android Companion 0.11 är öppen.";
-        return "Kontrollera Android Companion 0.11, telefonens IP-adress, port 8765, den aktuella 16-teckens parnyckeln, samma Wi-Fi och Windows-brandväggen.";
+            return $"Något annat än rätt Companion/protokoll svarade. Kontrollera telefonens IP, port 8765 och att Android Companion {RecommendedCompanionVersion} är öppen.";
+        return $"Kontrollera Android Companion {RecommendedCompanionVersion}, telefonens IP-adress, port 8765, den aktuella 16-teckens parnyckeln, samma Wi-Fi och Windows-brandväggen.";
     }
 
     private bool IsWifiMode=>ConnectionModeComboBox.SelectedIndex==1;
