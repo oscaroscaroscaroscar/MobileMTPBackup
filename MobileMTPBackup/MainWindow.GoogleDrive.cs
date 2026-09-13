@@ -23,12 +23,14 @@ public partial class MainWindow
 
             string target = Path.Combine(driveRoot, "MobileMTPBackup");
             Directory.CreateDirectory(target);
+            ValidateWritableTarget(target);
+
             DestinationTextBox.Text = target;
-            BackupStatusText.Text = "Google Drive valt som backupmål. Filer verifieras lokalt och synkas därefter av Google Drive for desktop.";
-            Log("GOOGLE DRIVE: backupmål satt till " + target);
+            BackupStatusText.Text = "Google Drive valt och skrivtestat som backupmål. Filer verifieras lokalt och synkas därefter av Google Drive for desktop.";
+            Log("GOOGLE DRIVE: backupmål valt och skrivtest godkänt: " + target);
             MessageBox.Show(
                 "Google Drive är valt som backupmål:\n\n" + target +
-                "\n\nBackupen går Mobil → dator → Google Drive. SHA-256 och .partial-säkerheten används innan filen färdigställs i Drive-mappen.",
+                "\n\nSkrivtest: GODKÄNT.\nBackupen går Mobil → dator → Google Drive. SHA-256 och .partial-säkerheten används innan filen färdigställs i Drive-mappen.",
                 "GOOGLE DRIVE KLART",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -36,8 +38,29 @@ public partial class MainWindow
         catch (Exception ex)
         {
             Log("GOOGLE DRIVE FEL: " + ex.GetBaseException().Message);
-            MessageBox.Show("Kunde inte välja Google Drive.\n\n" + ex.GetBaseException().Message,
+            MessageBox.Show("Kunde inte använda Google Drive som backupmål.\n\n" + ex.GetBaseException().Message +
+                "\n\nKontrollera att Google Drive for desktop är igång, att du är inloggad och att mappen är skrivbar.",
                 "GOOGLE DRIVE", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private static void ValidateWritableTarget(string target)
+    {
+        string probe = Path.Combine(target, $".mobilemtpbackup-write-test-{Guid.NewGuid():N}.tmp");
+        try
+        {
+            File.WriteAllText(probe, "MobileMTPBackup Google Drive write test");
+            using var stream = new FileStream(probe, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (stream.Length <= 0)
+                throw new IOException("Skrivtestfilen kunde inte verifieras.");
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(probe)) File.Delete(probe);
+            }
+            catch { }
         }
     }
 
