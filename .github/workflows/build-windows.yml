@@ -33,7 +33,7 @@ jobs:
           Write-Host "EXE size: $size bytes"
       - uses: actions/upload-artifact@v4
         with:
-          name: MobileMTPBackup-v5.31-Windows-x64
+          name: MobileMTPBackup-v5.32-Windows-x64
           path: publish/win-x64/
       - name: Build cumulative master package
         shell: pwsh
@@ -45,10 +45,10 @@ jobs:
           git log --date=iso --pretty=format:'%H %ad %s' | Out-File -Encoding utf8 master\HISTORY\COMMIT_HISTORY.txt
           @"
           Mobile MTP Backup MASTER package
-          Version: 5.31
+          Version: 5.32
           Android Companion source: 0.11.0
-          Google Drive target: can detect a mounted Google Drive for desktop root/My Drive/Min enhet and create/use a MobileMTPBackup folder as the destination. Files are still finalized only after existing local verification; Google Drive for desktop performs cloud synchronization.
-          Direct Google Drive API upload is not enabled in v5.31 and would require OAuth/client authorization.
+          Google Drive target: detects a mounted Google Drive for desktop root/My Drive/Min enhet, creates/uses MobileMTPBackup, then performs a temporary write/read test before accepting the target. The probe file is deleted immediately. Existing .partial finalization and SHA-256 verification remain in the real backup path; Google Drive for desktop performs cloud synchronization.
+          Direct Google Drive API upload is not enabled in v5.32 and would require OAuth/client authorization.
           Wi-Fi pairing: 64-bit random hexadecimal secret, regenerated when the Android app starts.
           Wi-Fi authentication: per-connection nonce + HMAC-SHA256; pairing secret is not sent in cleartext.
           Wi-Fi protected payloads: HELLO, LIST metadata, HASH replies and media file chunks use AES-256-GCM.
