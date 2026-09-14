@@ -33,7 +33,7 @@ jobs:
           Write-Host "EXE size: $size bytes"
       - uses: actions/upload-artifact@v4
         with:
-          name: MobileMTPBackup-v5.37-Windows-x64
+          name: MobileMTPBackup-v5.38-Windows-x64
           path: publish/win-x64/
       - name: Build cumulative master package
         shell: pwsh
@@ -45,11 +45,12 @@ jobs:
           git log --date=iso --pretty=format:'%H %ad %s' | Out-File -Encoding utf8 master\HISTORY\COMMIT_HISTORY.txt
           @"
           Mobile MTP Backup MASTER package
-          Version: 5.37
+          Version: 5.38
           Android Companion source: 0.12.0
-          Google Drive target: My Drive/Min enhet remains preferred over a raw Google Drive volume root. v5.37 classifies the selected root, performs the write/read probe, then writes a sanitized google-drive-target diagnostic report under MobileMTPBackup/_diagnostics containing app version, detected root, root kind, backup target, volume label and available bytes. Google account details and OAuth credentials are not included or used.
-          Existing .partial finalization, SHA-256 verification and incremental backup logic remain in the real backup path. Google Drive for desktop performs cloud synchronization.
-          Direct Google Drive API upload is not enabled and would require OAuth/client authorization.
+          Google Drive target: My Drive/Min enhet remains preferred over a raw Google Drive volume root. A temporary write/read probe and sanitized target diagnostic are used before backup.
+          Dropbox target: v5.38 detects Dropbox for desktop using local/roaming Dropbox info.json paths when available and falls back to the user's Dropbox folder. It creates MobileMTPBackup inside the selected synced root, performs the same temporary write/read probe, and writes a sanitized dropbox-target diagnostic under MobileMTPBackup/_diagnostics with app version, selected root, backup target, volume label and available bytes. Dropbox credentials and tokens are not used or included.
+          Existing .partial finalization, SHA-256 verification, date preservation and incremental backup logic remain in the real backup path. Google Drive for desktop or Dropbox for desktop performs cloud synchronization.
+          Direct Google Drive or Dropbox API upload is not enabled in the Windows app because those modes would require OAuth/client authorization.
           Companion 0.12 robustness remains: client failures are isolated, GET/HASH use direct MediaStore ID lookup, and Android 13+ image/video permissions are tracked independently.
           Wi-Fi pairing: 64-bit random hexadecimal secret, regenerated when the Android app starts.
           Wi-Fi authentication: per-connection nonce + HMAC-SHA256; pairing secret is not sent in cleartext.
