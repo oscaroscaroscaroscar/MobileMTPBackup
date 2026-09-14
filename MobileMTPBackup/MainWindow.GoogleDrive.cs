@@ -27,9 +27,11 @@ public partial class MainWindow
 
             DestinationTextBox.Text = target;
             BackupStatusText.Text = "Google Drive valt och skrivtestat som backupmål. Filer verifieras lokalt och synkas därefter av Google Drive for desktop.";
+            Log($"GOOGLE DRIVE: synkad rot vald: {driveRoot}");
             Log("GOOGLE DRIVE: backupmål valt och skrivtest godkänt: " + target);
             MessageBox.Show(
                 "Google Drive är valt som backupmål:\n\n" + target +
+                "\n\nSynkad Drive-rot:\n" + driveRoot +
                 "\n\nSkrivtest: GODKÄNT.\nBackupen går Mobil → dator → Google Drive. SHA-256 och .partial-säkerheten används innan filen färdigställs i Drive-mappen.",
                 "GOOGLE DRIVE KLART",
                 MessageBoxButton.OK,
@@ -66,11 +68,15 @@ public partial class MainWindow
 
     private static string? FindGoogleDriveRoot()
     {
-        var candidates = new List<string>();
+        var preferred = new List<string>();
+        var fallback = new List<string>();
         string user = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        candidates.Add(Path.Combine(user, "Google Drive"));
-        candidates.Add(Path.Combine(user, "My Drive"));
-        candidates.Add(Path.Combine(user, "Min enhet"));
+
+        preferred.Add(Path.Combine(user, "Google Drive", "My Drive"));
+        preferred.Add(Path.Combine(user, "Google Drive", "Min enhet"));
+        preferred.Add(Path.Combine(user, "My Drive"));
+        preferred.Add(Path.Combine(user, "Min enhet"));
+        fallback.Add(Path.Combine(user, "Google Drive"));
 
         foreach (var drive in DriveInfo.GetDrives())
         {
@@ -78,19 +84,30 @@ public partial class MainWindow
             {
                 if (!drive.IsReady) continue;
                 string root = drive.RootDirectory.FullName;
+                string myDrive = Path.Combine(root, "My Drive");
+                string minEnhet = Path.Combine(root, "Min enhet");
+
                 if (drive.VolumeLabel.Contains("Google Drive", StringComparison.OrdinalIgnoreCase))
                 {
-                    candidates.Insert(0, Path.Combine(root, "My Drive"));
-                    candidates.Insert(0, Path.Combine(root, "Min enhet"));
-                    candidates.Insert(0, root);
+                    // Drive for desktop commonly mounts a virtual volume. Prefer its actual synced
+                    // My Drive/Min enhet subtree over the volume root so backups do not accidentally
+                    // land beside the synced tree.
+                    preferred.Insert(0, minEnhet);
+                    preferred.Insert(0, myDrive);
+                    fallback.Insert(0, root);
                 }
-                candidates.Add(Path.Combine(root, "My Drive"));
-                candidates.Add(Path.Combine(root, "Min enhet"));
+                else
+                {
+                    preferred.Add(myDrive);
+                    preferred.Add(minEnhet);
+                }
             }
             catch { }
         }
 
-        foreach (string candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (string candidate in preferred
+                     .Concat(fallback)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             try
             {
