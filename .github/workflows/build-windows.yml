@@ -33,7 +33,7 @@ jobs:
           Write-Host "EXE size: $size bytes"
       - uses: actions/upload-artifact@v4
         with:
-          name: MobileMTPBackup-v5.38-Windows-x64
+          name: MobileMTPBackup-v5.39-Windows-x64
           path: publish/win-x64/
       - name: Build cumulative master package
         shell: pwsh
@@ -45,10 +45,11 @@ jobs:
           git log --date=iso --pretty=format:'%H %ad %s' | Out-File -Encoding utf8 master\HISTORY\COMMIT_HISTORY.txt
           @"
           Mobile MTP Backup MASTER package
-          Version: 5.38
+          Version: 5.39
           Android Companion source: 0.12.0
+          Progress UI: v5.39 overlays a visible integer percentage on the backup progress bar. Existing folder, Auto Media and Wi-Fi backup progress updates now show 0% through 100%; at completion the overlay changes to 100% - KLAR.
           Google Drive target: My Drive/Min enhet remains preferred over a raw Google Drive volume root. A temporary write/read probe and sanitized target diagnostic are used before backup.
-          Dropbox target: v5.38 detects Dropbox for desktop using local/roaming Dropbox info.json paths when available and falls back to the user's Dropbox folder. It creates MobileMTPBackup inside the selected synced root, performs the same temporary write/read probe, and writes a sanitized dropbox-target diagnostic under MobileMTPBackup/_diagnostics with app version, selected root, backup target, volume label and available bytes. Dropbox credentials and tokens are not used or included.
+          Dropbox target: detects Dropbox for desktop using local/roaming Dropbox info.json paths when available and falls back to the user's Dropbox folder. It creates MobileMTPBackup inside the selected synced root, performs the same temporary write/read probe, and writes a sanitized dropbox-target diagnostic under MobileMTPBackup/_diagnostics. Dropbox credentials and tokens are not used or included.
           Existing .partial finalization, SHA-256 verification, date preservation and incremental backup logic remain in the real backup path. Google Drive for desktop or Dropbox for desktop performs cloud synchronization.
           Direct Google Drive or Dropbox API upload is not enabled in the Windows app because those modes would require OAuth/client authorization.
           Companion 0.12 robustness remains: client failures are isolated, GET/HASH use direct MediaStore ID lookup, and Android 13+ image/video permissions are tracked independently.
@@ -56,7 +57,6 @@ jobs:
           Wi-Fi authentication: per-connection nonce + HMAC-SHA256; pairing secret is not sent in cleartext.
           Wi-Fi protected payloads: HELLO, LIST metadata, HASH replies and media file chunks use AES-256-GCM.
           CI protocol self-test remains: corrupted AES-GCM HELLO must be rejected, fresh connection recovery must succeed, then LIST, GET, HASH, AAD, SHA-256, .partial finalization and incremental skip logic are verified.
-          Wi-Fi diagnostics report the actual Windows assembly version, recommend Companion 0.12 centrally and never include the pairing secret.
           The initial nonce frame and errors before successful authentication are not TLS encrypted.
           Commit: $env:GITHUB_SHA
           Built: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')
