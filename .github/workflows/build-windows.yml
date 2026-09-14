@@ -33,7 +33,7 @@ jobs:
           Write-Host "EXE size: $size bytes"
       - uses: actions/upload-artifact@v4
         with:
-          name: MobileMTPBackup-v5.36-Windows-x64
+          name: MobileMTPBackup-v5.37-Windows-x64
           path: publish/win-x64/
       - name: Build cumulative master package
         shell: pwsh
@@ -45,17 +45,17 @@ jobs:
           git log --date=iso --pretty=format:'%H %ad %s' | Out-File -Encoding utf8 master\HISTORY\COMMIT_HISTORY.txt
           @"
           Mobile MTP Backup MASTER package
-          Version: 5.36
+          Version: 5.37
           Android Companion source: 0.12.0
-          Google Drive target: v5.36 fixes candidate ordering so mounted Google Drive volumes prefer the real synced My Drive/Min enhet subtree before falling back to the raw volume root. The selected synced root is logged and shown to the user. MobileMTPBackup is then created inside that selected root and a temporary write/read probe is performed before acceptance; the probe file is deleted immediately. Existing .partial finalization and SHA-256 verification remain in the real backup path; Google Drive for desktop performs cloud synchronization.
+          Google Drive target: My Drive/Min enhet remains preferred over a raw Google Drive volume root. v5.37 classifies the selected root, performs the write/read probe, then writes a sanitized google-drive-target diagnostic report under MobileMTPBackup/_diagnostics containing app version, detected root, root kind, backup target, volume label and available bytes. Google account details and OAuth credentials are not included or used.
+          Existing .partial finalization, SHA-256 verification and incremental backup logic remain in the real backup path. Google Drive for desktop performs cloud synchronization.
           Direct Google Drive API upload is not enabled and would require OAuth/client authorization.
-          Companion 0.12 robustness: each accepted client is isolated so timeout, broken socket, malformed input or transfer failure should not terminate the main server accept loop. GET and HASH use direct MediaStore ID lookup. Android 13+ image/video permissions are tracked independently.
+          Companion 0.12 robustness remains: client failures are isolated, GET/HASH use direct MediaStore ID lookup, and Android 13+ image/video permissions are tracked independently.
           Wi-Fi pairing: 64-bit random hexadecimal secret, regenerated when the Android app starts.
           Wi-Fi authentication: per-connection nonce + HMAC-SHA256; pairing secret is not sent in cleartext.
           Wi-Fi protected payloads: HELLO, LIST metadata, HASH replies and media file chunks use AES-256-GCM.
-          v5.34 CI protocol self-test remains: deliberately corrupted AES-GCM HELLO response must be rejected, followed by successful fresh-connection recovery against Companion 0.12 semantics; LIST, GET, HASH, AAD, SHA-256, .partial finalization and incremental skip logic are then verified.
-          v5.35 diagnostics remain: runtime diagnostics report the actual Windows assembly version, recommend Companion 0.12 centrally, record the recommended companion version in the sanitized report, and warn when a different companion version answers successfully.
-          TESTA WI-FI writes a sanitized timestamped report under backup destination/_diagnostics on success or failure. Pairing secret is explicitly not included.
+          CI protocol self-test remains: corrupted AES-GCM HELLO must be rejected, fresh connection recovery must succeed, then LIST, GET, HASH, AAD, SHA-256, .partial finalization and incremental skip logic are verified.
+          Wi-Fi diagnostics report the actual Windows assembly version, recommend Companion 0.12 centrally and never include the pairing secret.
           The initial nonce frame and errors before successful authentication are not TLS encrypted.
           Commit: $env:GITHUB_SHA
           Built: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')
