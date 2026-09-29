@@ -33,7 +33,7 @@ jobs:
           Write-Host "EXE size: $size bytes"
       - uses: actions/upload-artifact@v4
         with:
-          name: MobileMTPBackup-v5.39-Windows-x64
+          name: MobileMTPBackup-v5.40-Windows-x64
           path: publish/win-x64/
       - name: Build cumulative master package
         shell: pwsh
@@ -47,7 +47,7 @@ jobs:
           Mobile MTP Backup MASTER package
           Version: 5.39
           Android Companion source: 0.12.0
-          Progress UI: v5.39 overlays a visible integer percentage on the backup progress bar. Existing folder, Auto Media and Wi-Fi backup progress updates now show 0% through 100%; at completion the overlay changes to 100% - KLAR.
+          Progress UI: v5.40 overlays a visible integer percentage on the backup progress bar. Existing folder, Auto Media and Wi-Fi backup progress updates now show 0% through 100%; at completion the overlay changes to 100% - KLAR.
           Google Drive target: My Drive/Min enhet remains preferred over a raw Google Drive volume root. A temporary write/read probe and sanitized target diagnostic are used before backup.
           Dropbox target: detects Dropbox for desktop using local/roaming Dropbox info.json paths when available and falls back to the user's Dropbox folder. It creates MobileMTPBackup inside the selected synced root, performs the same temporary write/read probe, and writes a sanitized dropbox-target diagnostic under MobileMTPBackup/_diagnostics. Dropbox credentials and tokens are not used or included.
           Existing .partial finalization, SHA-256 verification, date preservation and incremental backup logic remain in the real backup path. Google Drive for desktop or Dropbox for desktop performs cloud synchronization.
