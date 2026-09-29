@@ -10,6 +10,15 @@ public partial class MainWindow
         ProgressPercentText.Text = value >= 99.999 ? "100% - KLAR" : $"{value:0}%";
     }
 
+    private void SetProgress(int done, int total)
+    {
+        double value = total <= 0 ? 0 : Math.Clamp((double)done / total * 100, 0, 100);
+        BackupProgressBar.Value = value;
+        ProgressPercentText.Text = value >= 99.999
+            ? $"100% - KLAR • {done}/{Math.Max(done, total)} filer"
+            : $"{value:0}% • {done}/{Math.Max(0, total)} filer";
+    }
+
     private void ResetProgress()
     {
         BackupProgressBar.Value = 0;
